@@ -1,0 +1,16 @@
+[project]
+name = "sudoku-py"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "ortools>=9.15.6755",
+]
+
+[project.scripts]
+sudoku-py = "sudoku_py:main"
+
+[build-system]
+requires = ["uv_build>=0.12.18,<0.13.0"]
+build-backend = "uv_build"
