@@ -2,115 +2,143 @@
 import functools as ft
 import itertools as it
 from time import time
+from typing import Any, Callable
 
 from ortools.sat.python import cp_model
-from ortools.sat.python.cp_model_helper import IntVar
+from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
+
+
+class SudokuProblem:
+    """
+    NOTE: All methods of this class are ZERO-INDEXED!
+    """
+
+    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3)):
+        self.grid_size = size
+        self.box_dims = box_dims
+        rows_of_boxes = self.grid_size/self.box_dims[0]
+        cols_of_boxes = self.grid_size/self.box_dims[1]
+        assert all(n.is_integer() for n in (rows_of_boxes, cols_of_boxes))
+        self.rows_of_boxes, self.cols_of_boxes = int(rows_of_boxes), int(cols_of_boxes)
+        
+        self.__model_setup()
+
+    def __model_setup(self):
+        self.model = cp_model.CpModel()
+        self.grid = self.__create_grid()
+        self.__add_sudoku_constraints()
+
+    def __create_grid(self):
+        return [[self.model.new_int_var(1, self.grid_size, f"Cell[{r},{c}]") 
+                        for c in range(self.grid_size)] for r in range(self.grid_size)]
+
+    def __add_sudoku_constraints(self):
+        for r in range(self.grid_size):
+            self.model.add_all_different(self.row(r))
+        for c in range(self.grid_size):
+            self.model.add_all_different(self.col(c))
+        for b in range(self.rows_of_boxes*self.cols_of_boxes):
+            self.model.add_all_different(ft.reduce(lambda x,y: x+y, self.box(b)))
+
+    def add_given(self, row:int, col:int, val:int):
+        self.model.add(self.grid[row][col]==val)
+
+    def add_givens(self, givens:list[tuple[int,int,int]]):
+        for row,col,val in givens:
+            self.model.add(self.grid[row][col]==val)
+
+    def row(self, row:int) -> list[IntVar]:
+        """Return list of the cells in Row <row>.
+        """
+        return self.grid[row]
+
+    def col(self, col:int) -> list[IntVar]:
+        """Return list of the cells in Column <col>.
+        """
+        return [self.grid[r][col] for r in range(self.grid_size)]
+
+    def box(self, box:int) -> list[list[IntVar]]:
+        """Return nested list of the cells in Box <box> in shape <self.box_dims>.
+        """
+        row = (box // self.cols_of_boxes) * self.box_dims[0]
+        col = (box % self.cols_of_boxes) * self.box_dims[1]
+        return [[self.grid[row+i][col+j] for j in range(self.box_dims[1])] for i in range(self.box_dims[0])]
+
+
+class OneIndexedSudokuProblem(SudokuProblem):
+
+    def __create_grid(self):
+        return [[self.model.new_int_var(1, self.grid_size, f"Cell[{r+1},{c+1}]") 
+                        for c in range(self.grid_size)] for r in range(self.grid_size)]
+
+    def __add_sudoku_constraints(self):
+        for r in range(self.grid_size):
+            self.model.add_all_different(super().row(r))
+        for c in range(self.grid_size):
+            self.model.add_all_different(super().col(c))
+        for b in range(self.rows_of_boxes*self.cols_of_boxes):
+            self.model.add_all_different(ft.reduce(lambda x,y: x+y, super().box(b)))
+    
+    def row(self, row:int) -> list[IntVar]:
+        """Return list of the cells in Row <row>.
+        """
+        return super().row(row-1)
+
+    def col(self, col:int) -> list[IntVar]:
+        """Return list of the cells in Column <col>.
+        """
+        return super().col(col-1)
+
+    def box(self, box:int) -> list[list[IntVar]]:
+        """Return nested list of the cells in Box <box> in shape <self.box_dims>.
+        """
+        return super().box(box-1)
+
+    def add_given(self, row:int, col:int, val:int):
+        return super().add_given(row-1, col-1, val)
+        
+    def add_givens(self, givens:list[tuple[int,int,int]]):
+        return super().add_givens([(r-1, c-1, v) for r,c,v in givens])
+
 
 
 class SudokuSolver:
 
-    @staticmethod
-    def make_offset_handler(offset_args:list[int]): # note: offset_args = [0] implies first argument after 'self'
-            def offset_handler(func):
-                def wrapper(self, *arg, one_indexed:bool|None=None, **kw):
-                    if one_indexed is None:
-                        one_indexed = self.one_indexed
-                    if one_indexed:
-                        arglist = [a-1 if i in offset_args else a for i,a in enumerate(arg)]
-                        return func(self, *arglist, **kw)
-                    else:
-                        return func(self, *arg, **kw)
-                return wrapper
-            return offset_handler
+    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), *, one_indexed:bool=True, solution_printer:bool|cp_model.CpSolverSolutionCallback=True):
+        if one_indexed:
+            self.problem = OneIndexedSudokuProblem(size, box_dims)
+        else:
+            self.problem = SudokuProblem(size, box_dims)
 
-    def __init__(self, grid_size:int=9, box_size:int|tuple[int,int]=(3,3), one_indexed_labels:bool=True):
-        self.N = grid_size
-        self.size = (grid_size, grid_size)
-        match box_size:
-            case int():
-                self.box_size = (box_size, box_size)
-            case tuple():
-                self.box_size = box_size
-            case _:
-                print("Unknown type for argument 'box_size'.")
-        num_boxes = self.N**2/(self.box_size[0]*self.box_size[1])
-        rows_of_boxes = self.size[0]/self.box_size[0]
-        cols_of_boxes = self.size[1]/self.box_size[1]
-        assert all(n.is_integer() for n in (num_boxes, rows_of_boxes, cols_of_boxes))
-        self.num_boxes, self.rows_of_boxes, self.cols_of_boxes = (int(n) for n in (num_boxes, rows_of_boxes, cols_of_boxes))
-
-        self.one_indexed = one_indexed_labels
+        self.solver = cp_model.CpSolver()
+        if solution_printer is True:
+            self.solver.parameters.enumerate_all_solutions = True
+            self.solution_printer = SudokuSolutionPrinter(self.problem.grid)
+        elif solution_printer is False:
+            self.solution_printer = None
+        else:
+            self.solution_printer = solution_printer
         
-        self.model: cp_model.CpModel = cp_model.CpModel()
-        self.grid = self._create_grid()
-        self._add_sudoku_constraints()
 
+    def add_given(self, row:int, col:int, val:int):
+            return self.problem.add_given(row, col, val)
+            
+    def add_givens(self, givens:list[tuple[int,int,int]]):
+        return self.problem.add_givens(givens)
 
-    def _create_grid(self):
-        return [[self.model.new_int_var(1, self.N, 
-                    f"Cell[{r+int(self.one_indexed)},{c+int(self.one_indexed)}]") for c in range(self.N)] for r in range(self.N)]
+        
+    def solve(self, solution_printer:bool=True, print_stats:bool=True) -> CpSolverStatus:
+        status = self.solver.solve(self.problem.model, self.solution_printer if solution_printer else None)
+        if print_stats:
+            print("\nStatistics")
+            print(f"  conflicts      : {self.solver.num_conflicts}")
+            print(f"  branches       : {self.solver.num_branches}")
+            print(f"  wall time      : {self.solver.wall_time} s")
+            if solution_printer and isinstance(self.solution_printer, SudokuSolutionPrinter):
+                print(f"  solutions found: {self.solution_printer.solution_count}")
+        return status
 
-
-    @make_offset_handler([0])
-    def row(self, r:int) -> list[IntVar]:
-        return self.grid[r]
-
-    @make_offset_handler([0])
-    def col(self, c:int) -> list[IntVar]:
-        return [self.grid[r][c] for r in range(self.N)]
-
-    @make_offset_handler([0,1])
-    def cell(self, r:int, c:int) -> IntVar:
-        return self.grid[r][c]
-
-    @make_offset_handler([0,1])
-    def box(self, br:int, bc:int=-2, flatten=False) -> list[IntVar]|list[list[IntVar]]:
-        # print(br,bc,self.num_boxes,self.rows_of_boxes, self.cols_of_boxes)
-        if bc < 0:
-            bc = br % self.cols_of_boxes
-            br = br // self.cols_of_boxes
-        B = [ [self.grid[br*self.box_size[0]+i][bc*self.box_size[1]+j] for j in range(self.box_size[1])] 
-            for i in range(self.box_size[0]) ]
-        return ft.reduce(lambda x,y: x+y, B) if flatten else B
-
-
-    ########## GENERAL SUDOKU CONSTRAINTS ##############
-    def _add_sudoku_constraints(self):
-        # no row repeats
-        for r in range(self.N):
-            self.model.add_all_different(self.grid[r])
-        # no column repeats
-        for c in range(self.N):
-            self.model.add_all_different(self.grid[r][c] for r in range(self.N))
-
-        # no repeats in boxes
-        for r in range(0,self.N,self.box_size[0]):
-            for c in range(0,self.N,self.box_size[1]):
-                self.model.add_all_different(
-                    self.grid[r+i][c+j] 
-                    for i,j in 
-                    it.product(range(self.box_size[0]), range(self.box_size[1]))
-                )
-
-
-    @make_offset_handler([0,1])
-    def _add_given_cell(self, r:int, c:int, val:int):
-        self.model.add(self.grid[r][c] == val)
-
-    def add_given_cells(self, *givens:tuple[int,int,int], one_indexed=None):
-        for given in givens:
-            self._add_given_cell(*given, one_indexed=one_indexed) # pyright: ignore[reportCallIssue]
-
-
-
-def check_indexing(S:SudokuSolver):
-    # for i in range(S.N):
-    #     print(i, S.col(i, one_indexed=False)) # pyright: ignore[reportCallIssue]
-
-    for i in range(S.num_boxes):
-        for br in S.box(i, one_indexed=False): # pyright: ignore[reportCallIssue]
-            print(br)
-        print()
+    
 
 
 class SudokuSolutionPrinter(cp_model.CpSolverSolutionCallback):
@@ -141,35 +169,23 @@ class SudokuSolutionPrinter(cp_model.CpSolverSolutionCallback):
         print()
 
 def example1():
-    S = SudokuSolver(6, (2,3), one_indexed_labels=True)
-    S.add_given_cells(
-            (1,4,1), (1,6,6),
-            (2,1,6), (2,3,4),
-            (3,1,1), (3,3,2),
-            (4,4,5), (4,6,1),
-            (5,4,6), (5,6,3),
-            (6,1,5), (6,3,6)
-        )
-    return S
+    S = SudokuSolver(6, (2,3), one_indexed=True)
+    S.add_givens([
+              (1,4,1), (1,6,6)
+            , (2,1,6), (2,3,4)
+            , (3,1,1), (3,3,2)
+            , (4,4,5), (4,6,1)
+            , (5,4,6), (5,6,3)
+            , (6,1,5), (6,3,6)
+        ])
+    return S.solve()
 
 
 
 
 def main():
 
-    S = example1()
-    
-    solver = cp_model.CpSolver()
-    solution_printer = SudokuSolutionPrinter(S.grid)
-    solver.parameters.enumerate_all_solutions = True
-    solver.solve(S.model, solution_printer)
-
-    # Statistics.
-    print("\nStatistics")
-    print(f"  conflicts      : {solver.num_conflicts}")
-    print(f"  branches       : {solver.num_branches}")
-    print(f"  wall time      : {solver.wall_time} s")
-    print(f"  solutions found: {solution_printer.solution_count}")
+    example1()
 
 
 
