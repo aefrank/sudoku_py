@@ -40,13 +40,6 @@ class SudokuProblem:
         for b in range(self.rows_of_boxes*self.cols_of_boxes):
             self.model.add_all_different(ft.reduce(lambda x,y: x+y, self.box(b)))
 
-    def add_given(self, row:int, col:int, val:int):
-        self.model.add(self.grid[row][col]==val)
-
-    def add_givens(self, givens:list[tuple[int,int,int]]):
-        for row,col,val in givens:
-            self.model.add(self.grid[row][col]==val)
-
     def row(self, row:int) -> list[IntVar]:
         """Return list of the cells in Row <row>.
         """
@@ -63,6 +56,21 @@ class SudokuProblem:
         row = (box // self.cols_of_boxes) * self.box_dims[0]
         col = (box % self.cols_of_boxes) * self.box_dims[1]
         return [[self.grid[row+i][col+j] for j in range(self.box_dims[1])] for i in range(self.box_dims[0])]
+
+    def cell(self, row:int, col:int) -> IntVar:
+        return self.grid[row][col]
+
+    def get_all_adjacent_pairs(self) -> list[tuple[IntVar,IntVar]]:
+        horizontal_pairs = [(self.cell(r,c), self.cell(r,c+1)) for r,c in it.product(range(self.grid_size), range(self.grid_size-1))]
+        vertical_pairs = [(self.cell(r,c), self.cell(r+1,c)) for r,c in it.product(range(self.grid_size-1), range(self.grid_size))]
+        return horizontal_pairs + vertical_pairs
+
+    def add_given(self, row:int, col:int, val:int):
+            self.model.add(self.grid[row][col]==val)
+    
+    def add_givens(self, givens:list[tuple[int,int,int]]):
+        for row,col,val in givens:
+            self.model.add(self.grid[row][col]==val)
 
 
 class OneIndexedSudokuProblem(SudokuProblem):
@@ -94,9 +102,12 @@ class OneIndexedSudokuProblem(SudokuProblem):
         """
         return super().box(box-1)
 
+    def cell(self, row:int, col:int) -> IntVar:
+        return super().cell(row-1, col-1)
+
     def add_given(self, row:int, col:int, val:int):
-        return super().add_given(row-1, col-1, val)
-        
+            return super().add_given(row-1, col-1, val)
+            
     def add_givens(self, givens:list[tuple[int,int,int]]):
         return super().add_givens([(r-1, c-1, v) for r,c,v in givens])
 

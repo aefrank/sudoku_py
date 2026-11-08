@@ -23,77 +23,119 @@ class SudokuSolverPlus(SudokuSolver):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    # Internals
+    def __as_Cell(self, cell:IntVar|int|tuple[int,int], col:int|None=None):
+        match cell:
+            case int():
+                assert isinstance(col,int)
+                return self.problem.cell(cell, col)
+            case tuple():
+                return self.problem.cell(*cell)
+            case IntVar():
+                return cell
+            case _:
+                print("This should never be reached")
+
+    def __add_V(self, cell1: IntVar, cell2: IntVar):
+        self.problem.model.add(cell1 + cell2 == 5)    
+
+    def __add_negative_V(self, cell1:IntVar, cell2:IntVar):
+        self.problem.model.add(cell1 + cell2 != 5)  
+
+    def __add_X(self, cell1: IntVar, cell2: IntVar):
+        self.problem.model.add(cell1 + cell2 == 10)   
+
+    def __add_negative_X(self, cell1:IntVar, cell2:IntVar):
+        self.problem.model.add(cell1 + cell2 != 10)  
+
+    def __add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
+        self.problem.model.add(cell1 - cell2 != 1)
+        self.problem.model.add(cell2 - cell1 != 1)
     
-    def get_all_adjacent_pairs(self) -> list[tuple[IntVar,IntVar]]:
-        horizontal_pairs = [(self.grid[r][c], self.grid[r][c+1]) for r,c in it.product(range(self.N), range(self.N-1))]
-        vertical_pairs = [(self.grid[r][c], self.grid[r+1][c]) for r,c in it.product(range(self.N-1), range(self.N))]
-        return horizontal_pairs + vertical_pairs
+    # Interface
+    def cell(self, row: int, col: int) -> IntVar:
+        return self.problem.cell(row,col)
 
-    def add_V(self, cell1: tuple[int,int], cell2: tuple[int,int]):
-        self.model.add(self.cell(*cell1)+self.cell(*cell2)==5)
+    def get_all_adjacent_pairs(self):
+        return self.problem.get_all_adjacent_pairs()
 
-    def add_negative_V(self, cell1: tuple[int,int], cell2: tuple[int,int]):
-        self.model.add(self.cell(*cell1)+self.cell(*cell2)!=5)
+    def add_V(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
+        return self.__add_V(self.__as_Cell(cell1), self.__as_Cell(cell2))
+
+    def add_negative_V(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
+        return self.__add_negative_V(self.__as_Cell(cell1), self.__as_Cell(cell2))
         
-    def add_X(self, cell1: tuple[int,int], cell2: tuple[int,int]):
-            self.model.add(self.cell(*cell1)+self.cell(*cell2)==10)
+    def add_X(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
+        return self.__add_X(self.__as_Cell(cell1), self.__as_Cell(cell2))
 
-    def add_negative_X(self, cell1: tuple[int,int], cell2: tuple[int,int]):
-        self.model.add(self.cell(*cell1)+self.cell(*cell2)!=10)
+    def add_negative_X(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
+        return self.__add_negative_X(self.__as_Cell(cell1), self.__as_Cell(cell2))
 
-    def add_nonconsecutive(self, cell1: tuple[int,int], cell2: tuple[int,int]):
-            self.model.add(self.cell(*cell1)-self.cell(*cell2)!=1)
-            self.model.add(self.cell(*cell2)-self.cell(*cell1)!=1)
+    def add_nonconsecutive(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
+        return self.__add_nonconsecutive(self.__as_Cell(cell1), self.__as_Cell(cell2))
+
+    
+            
 
 
 
-S = SudokuSolverPlus()
-print(S.get_all_adjacent_pairs())
-print(len(S.get_all_adjacent_pairs()))
-
-def secret_windmill(self):
+def secret_windmill():
     S = SudokuSolverPlus()
 
-    # no two cells on yellow circle ((1,8),(1,9),(2,9),(2,8)) cannot be consecutive
+    # no two cells on yellow circle are consecutive
     circle_cells = [(1,8),(1,9),(2,8),(2,9)]
     for a,b in it.combinations(circle_cells,2):
         S.add_nonconsecutive(a,b)
 
-    adjacent_pairs = S.get_all_adjacent_pairs()
+    v_pairs = [
+          ((2,2),(2,3))
+        , ((2,8),(3,8))
+        , ((7,2),(8,2))
+        , ((8,7),(8,8))
+    ]
+    V_constraint_pairs = [(S.cell(*cell1),S.cell(*cell2)) for cell1,cell2 in v_pairs]
+    x_pairs = [ 
+          ((2,3), (3,3))
+        , ((3,3), (3,4))
+        , ((3,4), (4,4))
+        , ((4,4), (4,5))
 
-    # V constraints (cells must add to 5)
-    V_constraint_pairs = [((2,2),(2,3)), ((2,8),(3,8)), ((7,2),(8,2)), ((8,7),(8,8))]
+        , ((3,8), (3,7))
+        , ((3,7), (4,7))
+        , ((4,7), (4,6))
+        , ((4,6), (5,6))
+
+        , ((5,4), (6,4))
+        , ((6,4), (6,3))
+        , ((6,3), (7,3))
+        , ((7,3), (7,2))
+
+        , ((6,5), (6,6))
+        , ((6,6), (7,6))
+        , ((7,6), (7,7))
+        , ((7,7), (8,7))
+    ]
+    X_constraint_pairs = [(S.cell(*cell1),S.cell(*cell2)) for cell1,cell2 in x_pairs]
+
+
+    adjacent_pairs = S.get_all_adjacent_pairs()
     for pair in adjacent_pairs:
         if pair in V_constraint_pairs:
             S.add_V(*pair)
-        else:
-            S.add_negative_V(*pair)
+        elif pair in X_constraint_pairs:
+            S.add_X(*pair)
+        # else:
+        #     # This ruleset states that any adjacent cells that DON'T have a V (or X) 
+        #     # between them MUST NOT add to 5 (or 10).
+        #     S.add_negative_V(*pair)
+        #     S.add_negative_X(*pair)
 
-
-    # X constraints
-    S.add_X((2,3), (3,3))
-    S.add_X((3,3), (3,4))
-    S.add_X((3,4), (4,4))
-    S.add_X((4,4), (4,5))
-
-    S.add_X((3,8), (3,7))
-    S.add_X((3,7), (4,7))
-    S.add_X((4,7), (4,6))
-    S.add_X((4,6), (5,6))
-
-    S.add_X((5,4), (6,4))
-    S.add_X((6,4), (6,3))
-    S.add_X((6,3), (7,3))
-    S.add_X((7,3), (7,2))
-
-    S.add_X((6,5), (6,6))
-    S.add_X((6,6), (7,6))
-    S.add_X((7,6), (7,7))
-    S.add_X((7,7), (8,7))
-
+    return S.solve()
 
 
         
+if __name__ == "__main__":
+    secret_windmill()
 
 
 
