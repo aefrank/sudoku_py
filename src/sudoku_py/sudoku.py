@@ -115,20 +115,13 @@ class OneIndexedSudokuProblem(SudokuProblem):
 
 class SudokuSolver:
 
-    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), *, one_indexed:bool=True, solution_printer:bool|cp_model.CpSolverSolutionCallback=True):
+    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), *, one_indexed:bool=True):
         if one_indexed:
             self.problem = OneIndexedSudokuProblem(size, box_dims)
         else:
             self.problem = SudokuProblem(size, box_dims)
 
         self.solver = cp_model.CpSolver()
-        if solution_printer is True:
-            self.solver.parameters.enumerate_all_solutions = True
-            self.solution_printer = SudokuSolutionPrinter(self.problem.grid)
-        elif solution_printer is False:
-            self.solution_printer = None
-        else:
-            self.solution_printer = solution_printer
         
 
     def add_given(self, row:int, col:int, val:int):
@@ -138,15 +131,15 @@ class SudokuSolver:
         return self.problem.add_givens(givens)
 
         
-    def solve(self, solution_printer:bool=True, print_stats:bool=True) -> CpSolverStatus:
-        status = self.solver.solve(self.problem.model, self.solution_printer if solution_printer else None)
+    def solve(self, solution_printer:cp_model.CpSolverSolutionCallback|None=None, print_stats:bool=True) -> CpSolverStatus:
+        status = self.solver.solve(self.problem.model, solution_printer)
         if print_stats:
             print("\nStatistics")
             print(f"  conflicts      : {self.solver.num_conflicts}")
             print(f"  branches       : {self.solver.num_branches}")
             print(f"  wall time      : {self.solver.wall_time} s")
-            if solution_printer and isinstance(self.solution_printer, SudokuSolutionPrinter):
-                print(f"  solutions found: {self.solution_printer.solution_count}")
+            if isinstance(solution_printer, SudokuSolutionPrinter):
+                print(f"  solutions found: {solution_printer.solution_count}")
         return status
 
     
@@ -189,7 +182,7 @@ def example1():
             , (5,4,6), (5,6,3)
             , (6,1,5), (6,3,6)
         ])
-    return S.solve()
+    return S.solve(solution_printer=SudokuSolutionPrinter(S.problem.grid))
 
 
 
