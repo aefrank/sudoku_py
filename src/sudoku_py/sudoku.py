@@ -77,6 +77,10 @@ class __SudokuProblem:
         assert R is not None
         return int(R.group(1)), int(R.group(2))
 
+    def __as_canonical_coords_pair(self, pair:tuple[tuple[int,int],tuple[int,int]]) -> tuple[tuple[int,int],tuple[int,int]]:
+        cell1, cell2 = sorted(pair)
+        return cell1, cell2
+
     def __as_canonical_cell_pair(self, cell1:CellVar, cell2:CellVar) -> tuple[CellVar,CellVar]:
         c1 = self.__to_coordinates(cell1)
         c2 = self.__to_coordinates(cell2)
@@ -96,31 +100,34 @@ class SudokuProblem(__SudokuProblem):
 
 
     def cell(self, row:int, col:int) -> CellVar:
-            return self.__cell(row,col)
+            return super().__cell(row,col)
     
     def to_coordinates(self, cell:CellVar) -> tuple[int,int]:
-        return self.__to_coordinates(cell)
+        return super().__to_coordinates(cell)
 
     def as_canonical_cell_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]) -> tuple[CellVar,CellVar]:
-        return self.__as_canonical_cell_pair(self.cell(*cell1), self.cell(*cell2))
+        return super().__as_canonical_cell_pair(self.cell(*cell1), self.cell(*cell2))
+
+    def as_canonical_coords_pair(self, pair: tuple[tuple[int, int], tuple[int, int]]) -> tuple[tuple[int, int], tuple[int, int]]:
+        return super().__as_canonical_coords_pair(pair)
     
     # Interface
     def row(self, row:int) -> list[tuple[int,int]]:
-        return [self.__to_coordinates(cell) for cell in self.__row(row)]
+        return [super().__to_coordinates(cell) for cell in self.__row(row)]
     def col(self, col:int) -> list[tuple[int,int]]:
-        return [self.__to_coordinates(cell) for cell in self.__col(col)]
+        return [super().__to_coordinates(cell) for cell in self.__col(col)]
     def box(self, box:int) -> list[list[tuple[int,int]]]:
-        return [[self.__to_coordinates(cell) for cell in row] for row in self.__box(box)]
+        return [[super().__to_coordinates(cell) for cell in row] for row in self.__box(box)]
     
     
     def get_all_horizontal_pairs(self) -> list[tuple[tuple[int,int], tuple[int,int]]]:
-        return [(self.__to_coordinates(cell1), self.__to_coordinates(cell2)) for cell1,cell2 in self.__get_all_horizontal_pairs()]
+        return [(self.to_coordinates(cell1), self.to_coordinates(cell2)) for cell1,cell2 in self.__get_all_horizontal_pairs()]
     
     def get_all_vertical_pairs(self) -> list[tuple[tuple[int,int], tuple[int,int]]]:
-        return [(self.__to_coordinates(cell1), self.__to_coordinates(cell2)) for cell1,cell2 in self.__get_all_vertical_pairs()]
+        return [(self.to_coordinates(cell1), self.to_coordinates(cell2)) for cell1,cell2 in self.__get_all_vertical_pairs()]
     
     def get_all_adjacent_pairs(self) -> list[tuple[tuple[int,int], tuple[int,int]]]:
-        return [(self.__to_coordinates(cell1), self.__to_coordinates(cell2)) for cell1,cell2 in self.__get_all_adjacent_pairs()]
+        return [(self.to_coordinates(cell1), self.to_coordinates(cell2)) for cell1,cell2 in self.__get_all_adjacent_pairs()]
 
     def add_given(self, row:int, col:int, val:int):
         return self.__add_given(self.cell(row,col), val)
@@ -140,6 +147,10 @@ class OneIndexedSudokuProblem(SudokuProblem):
 
     def cell(self, row:int, col:int) -> CellVar:
         return super().cell(row-1, col-1)
+
+    def to_coordinates(self, cell:CellVar) -> tuple[int,int]:
+            r,c = super().to_coordinates(cell)
+            return r+1, c+1
 
     # INTERFACE
     
@@ -163,6 +174,9 @@ class OneIndexedSudokuProblem(SudokuProblem):
             
     def add_givens(self, givens:list[tuple[int,int,int]]):
         return super().add_givens([(r-1, c-1, v) for r,c,v in givens])
+
+    # def get_all_adjacent_pairs(self) -> list[tuple[tuple[int,int], tuple[int,int]]]:
+    #     return [(self.to_coordinates(cell1), self.to_coordinates(cell2)) for cell1,cell2 in self.get_all_adjacent_pairs()]
 
 
 
@@ -189,8 +203,8 @@ class SudokuSolver:
             print(f"  conflicts      : {self.solver.num_conflicts}")
             print(f"  branches       : {self.solver.num_branches}")
             print(f"  wall time      : {self.solver.wall_time} s")
-            if isinstance(solution_printer, SudokuSolutionPrinter):
-                print(f"  solutions found: {solution_printer.solution_count}")
+            if hasattr(solution_printer, "solution_count"):
+                print(f"  solutions found: {solution_printer.solution_count}") # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
         return status
 
     
