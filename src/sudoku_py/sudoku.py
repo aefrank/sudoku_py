@@ -8,8 +8,10 @@ from typing import Any, Callable
 from ortools.sat.python import cp_model
 from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
 
+CellVar = IntVar
 
-class SudokuProblem:
+
+class __SudokuProblem:
     """
     NOTE: All methods of this class are ZERO-INDEXED!
     """
@@ -21,111 +23,143 @@ class SudokuProblem:
         cols_of_boxes = self.grid_size/self.box_dims[1]
         assert all(n.is_integer() for n in (rows_of_boxes, cols_of_boxes))
         self.rows_of_boxes, self.cols_of_boxes = int(rows_of_boxes), int(cols_of_boxes)
-        
-        self._model_setup()
+        self.__model_setup()
 
-    def _model_setup(self):
+    def __model_setup(self):
         self.model = cp_model.CpModel()
-        self.grid = self._create_grid()
+        self.grid = self.__create_grid()
         self.__add_sudoku_constraints()
 
-    def _create_grid(self):
+    def __create_grid(self):
         return [[self.model.new_int_var(1, self.grid_size, f"Cell[{r},{c}]") 
-                        for c in range(self.grid_size)] for r in range(self.grid_size)]
+                for c in range(self.grid_size)] for r in range(self.grid_size)]
 
     def __add_sudoku_constraints(self):
         for r in range(self.grid_size):
-            self.model.add_all_different(self.row(r))
+            self.model.add_all_different(self.__row(r))
         for c in range(self.grid_size):
-            self.model.add_all_different(self.col(c))
+            self.model.add_all_different(self.__col(c))
         for b in range(self.rows_of_boxes*self.cols_of_boxes):
-            self.model.add_all_different(ft.reduce(lambda x,y: x+y, self.box(b)))
+            self.model.add_all_different(ft.reduce(lambda x,y: x+y, self.__box(b)))
 
-    def row(self, row:int) -> list[IntVar]:
+    def __row(self, row:int) -> list[CellVar]:
         """Return list of the cells in Row <row>.
         """
         return self.grid[row]
 
-    def col(self, col:int) -> list[IntVar]:
+    def __col(self, col:int) -> list[CellVar]:
         """Return list of the cells in Column <col>.
         """
         return [self.grid[r][col] for r in range(self.grid_size)]
 
-    def box(self, box:int) -> list[list[IntVar]]:
+    def __box(self, box:int) -> list[list[CellVar]]:
         """Return nested list of the cells in Box <box> in shape <self.box_dims>.
         """
         row = (box // self.cols_of_boxes) * self.box_dims[0]
         col = (box % self.cols_of_boxes) * self.box_dims[1]
         return [[self.grid[row+i][col+j] for j in range(self.box_dims[1])] for i in range(self.box_dims[0])]
 
-    def cell(self, row:int, col:int) -> IntVar:
+    def __cell(self, row:int, col:int) -> CellVar:
         return self.grid[row][col]
 
-    def get_all_horizontal_pairs(self) -> list[tuple[IntVar,IntVar]]:
-            return [(self.cell(r,c), self.cell(r,c+1)) for r,c in it.product(range(self.grid_size), range(self.grid_size-1))]
-    def get_all_vertical_pairs(self) -> list[tuple[IntVar,IntVar]]:
-        return [(self.cell(r,c), self.cell(r+1,c)) for r,c in it.product(range(self.grid_size-1), range(self.grid_size))]
+    def __get_all_horizontal_pairs(self) -> list[tuple[CellVar,CellVar]]:
+            return [(self.__cell(r,c), self.__cell(r,c+1)) for r,c in it.product(range(self.grid_size), range(self.grid_size-1))]
+    def __get_all_vertical_pairs(self) -> list[tuple[CellVar,CellVar]]:
+        return [(self.__cell(r,c), self.__cell(r+1,c)) for r,c in it.product(range(self.grid_size-1), range(self.grid_size))]
 
-    def get_all_adjacent_pairs(self) -> list[tuple[IntVar,IntVar]]:
-        return self.get_all_horizontal_pairs() + self.get_all_vertical_pairs()
-
+    def __get_all_adjacent_pairs(self) -> list[tuple[CellVar,CellVar]]:
+        return self.__get_all_horizontal_pairs() + self.__get_all_vertical_pairs()
 
     __coordinate_regex = re.compile(r"Cell\[" + r"(\d+)" + r"," + r"(\d+)" + r"\]")
-    def _to_coordinates(self, cell:IntVar) -> tuple[int,int]:
+
+    def __to_coordinates(self, cell:CellVar) -> tuple[int,int]:
         R = self.__coordinate_regex.search(cell.name)
         assert R is not None
-        return int(R.group(1)),int(R.group(2))
+        return int(R.group(1)), int(R.group(2))
 
-    def _as_canonical_cell_pair(self, cell1:IntVar|tuple[int,int], cell2:IntVar|tuple[int,int]) -> tuple[IntVar,IntVar]:
-        if isinstance(cell1,IntVar):
-            cell1 = self._to_coordinates(cell1)
-        if isinstance(cell2, IntVar):
-            cell2 = self._to_coordinates(cell2)
-        pair = sorted((cell1,cell2))
-        return (self.cell(*pair[0]), self.cell(*pair[1]))
+    def __as_canonical_cell_pair(self, cell1:CellVar, cell2:CellVar) -> tuple[CellVar,CellVar]:
+        c1 = self.__to_coordinates(cell1)
+        c2 = self.__to_coordinates(cell2)
+        pair = sorted((c1,c2))
+        return (self.__cell(*pair[0]), self.__cell(*pair[1]))
+
+    def __add_given(self, cell:CellVar, val:int):
+        self.model.add(cell == val)
+                
+    def __add_givens(self, givens:list[tuple[CellVar,int]]):
+        for cell, val in givens:
+            self.model.add(cell == val)
+
+    
+
+class SudokuProblem(__SudokuProblem):
+
+
+    def cell(self, row:int, col:int) -> CellVar:
+            return self.__cell(row,col)
+    
+    def to_coordinates(self, cell:CellVar) -> tuple[int,int]:
+        return self.__to_coordinates(cell)
+
+    def as_canonical_cell_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]) -> tuple[CellVar,CellVar]:
+        return self.__as_canonical_cell_pair(self.cell(*cell1), self.cell(*cell2))
+    
+    # Interface
+    def row(self, row:int) -> list[tuple[int,int]]:
+        return [self.__to_coordinates(cell) for cell in self.__row(row)]
+    def col(self, col:int) -> list[tuple[int,int]]:
+        return [self.__to_coordinates(cell) for cell in self.__col(col)]
+    def box(self, box:int) -> list[list[tuple[int,int]]]:
+        return [[self.__to_coordinates(cell) for cell in row] for row in self.__box(box)]
+    
+    
+    def get_all_horizontal_pairs(self) -> list[tuple[tuple[int,int], tuple[int,int]]]:
+        return [(self.__to_coordinates(cell1), self.__to_coordinates(cell2)) for cell1,cell2 in self.__get_all_horizontal_pairs()]
+    
+    def get_all_vertical_pairs(self) -> list[tuple[tuple[int,int], tuple[int,int]]]:
+        return [(self.__to_coordinates(cell1), self.__to_coordinates(cell2)) for cell1,cell2 in self.__get_all_vertical_pairs()]
+    
+    def get_all_adjacent_pairs(self) -> list[tuple[tuple[int,int], tuple[int,int]]]:
+        return [(self.__to_coordinates(cell1), self.__to_coordinates(cell2)) for cell1,cell2 in self.__get_all_adjacent_pairs()]
 
     def add_given(self, row:int, col:int, val:int):
-                self.model.add(self.grid[row][col]==val)
+        return self.__add_given(self.cell(row,col), val)
         
     def add_givens(self, givens:list[tuple[int,int,int]]):
-        for row,col,val in givens:
-            self.model.add(self.grid[row][col]==val)
+        return self.__add_givens([(self.cell(r,c),v) for r,c,v in givens])
+
 
 
 class OneIndexedSudokuProblem(SudokuProblem):
 
-    def _create_grid(self):
-        return [[self.model.new_int_var(1, self.grid_size, f"Cell[{r+1},{c+1}]") 
-                        for c in range(self.grid_size)] for r in range(self.grid_size)]
+    # INTERNALS
 
-    def _add_sudoku_constraints(self):
-        for r in range(self.grid_size):
-            self.model.add_all_different(super().row(r))
-        for c in range(self.grid_size):
-            self.model.add_all_different(super().col(c))
-        for b in range(self.rows_of_boxes*self.cols_of_boxes):
-            self.model.add_all_different(ft.reduce(lambda x,y: x+y, super().box(b)))
+    def __create_grid(self):
+        return [[self.model.new_int_var(1, self.grid_size, f"Cell[{r+1},{c+1}]") 
+                for c in range(self.grid_size)] for r in range(self.grid_size)]
+
+    def cell(self, row:int, col:int) -> CellVar:
+        return super().cell(row-1, col-1)
+
+    # INTERFACE
     
-    def row(self, row:int) -> list[IntVar]:
+    def row(self, row:int) -> list[tuple[int,int]]:
         """Return list of the cells in Row <row>.
         """
         return super().row(row-1)
 
-    def col(self, col:int) -> list[IntVar]:
+    def col(self, col:int) -> list[tuple[int,int]]:
         """Return list of the cells in Column <col>.
         """
         return super().col(col-1)
 
-    def box(self, box:int) -> list[list[IntVar]]:
+    def box(self, box:int) -> list[list[tuple[int,int]]]:
         """Return nested list of the cells in Box <box> in shape <self.box_dims>.
         """
         return super().box(box-1)
 
-    def cell(self, row:int, col:int) -> IntVar:
-        return super().cell(row-1, col-1)
-
     def add_given(self, row:int, col:int, val:int):
-            return super().add_given(row-1, col-1, val)
+        return super().add_given(row-1, col-1, val)
             
     def add_givens(self, givens:list[tuple[int,int,int]]):
         return super().add_givens([(r-1, c-1, v) for r,c,v in givens])
@@ -139,7 +173,6 @@ class SudokuSolver:
             self.problem = OneIndexedSudokuProblem(size, box_dims)
         else:
             self.problem = SudokuProblem(size, box_dims)
-
         self.solver = cp_model.CpSolver()
         
 
@@ -149,7 +182,6 @@ class SudokuSolver:
     def add_givens(self, givens:list[tuple[int,int,int]]):
         return self.problem.add_givens(givens)
 
-        
     def solve(self, solution_printer:cp_model.CpSolverSolutionCallback|None=None, print_stats:bool=True) -> CpSolverStatus:
         status = self.solver.solve(self.problem.model, solution_printer)
         if print_stats:
@@ -207,7 +239,6 @@ def example1():
 
 
 def main():
-
     example1()
 
 

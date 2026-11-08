@@ -17,44 +17,96 @@ from time import time
 from ortools.sat.python import cp_model
 from ortools.sat.python.cp_model_helper import IntVar
 
-from sudoku_py.sudoku import SudokuProblem, SudokuSolver, SudokuSolutionPrinter
+from sudoku_py.sudoku import OneIndexedSudokuProblem, SudokuProblem, SudokuSolver, SudokuSolutionPrinter, CellVar
 
 Coords = tuple[int,int]
 CoordsPair = tuple[Coords,Coords]
 VarPair = tuple[IntVar,IntVar] 
 
 
+class XVSudokuProblem(OneIndexedSudokuProblem):
+
+    # INTERNAL
+    def __init__(self, size: int = 9, box_dims: tuple[int, int] = (3, 3)):
+        super().__init__(size, box_dims)
+        self.__V_borders:tuple[set[tuple[int,int]],set[tuple[int,int]]] = (set(),set())
+        self.__X_borders:tuple[set[tuple[int,int]],set[tuple[int,int]]] = (set(),set())
+
+
+    def __add_V_constraint(self, cell1:CellVar, cell2:CellVar):
+        self.model.add(cell1 + cell2 == 5)
+
+    def __add_negative_V_constraint(self, cell1:CellVar, cell2:CellVar):
+        self.model.add(cell1 + cell2 != 5)
+
+    def __add_X_constraint(self, cell1:CellVar, cell2:CellVar):
+        self.model.add(cell1 + cell2 == 10)
+
+    def __add_negative_X_constraint(self, cell1:CellVar, cell2:CellVar):
+        self.model.add(cell1 + cell2 != 10)
+
+    def __is_horizontal_adjacent_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]) -> bool:
+        return cell1[0]-cell2[0]==0 and abs(cell1[1]-cell2[1])==1
+
+    def __is_vertical_adjacent_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]) -> bool:
+        return abs(cell1[0]-cell2[0])==1 and cell1[1]-cell2[1]==0
+    
+        
+    def __add_V_border(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        if self.__is_horizontal_adjacent_pair(cell1, cell2):
+            self.__V_borders[0].add(sorted([cell1,cell2])[0])
+        elif self.__is_vertical_adjacent_pair(cell1, cell2):
+            self.__V_borders[1].add(sorted([cell1,cell2])[0])    
+
+    def __add_X_border(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        if self.__is_horizontal_adjacent_pair(cell1, cell2):
+            self.__X_borders[0].add(sorted([cell1,cell2])[0])
+        elif self.__is_vertical_adjacent_pair(cell1, cell2):
+            self.__X_borders[1].add(sorted([cell1,cell2])[0])    
+    
+    # INTERFACE
+
+    @property
+    def V_borders(self):
+        return self.__V_borders
+
+    @property
+    def X_borders(self):
+        return self.__X_borders
+    
+    
+    def add_V(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        self.__add_V_border(cell1,cell2)
+        return self.__add_V_constraint(self.cell(*cell1),self.cell(*cell2))
+    
+    def add_negative_V(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        return self.__add_negative_V_constraint(self.cell(*cell1),self.cell(*cell2))
+    
+    def add_X(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        self.__add_X_border(cell1,cell2)
+        return self.__add_X_constraint(self.cell(*cell1),self.cell(*cell2))
+    
+    def add_negative_X(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        return self.__add_negative_X_constraint(self.cell(*cell1),self.cell(*cell2))
+
+    def infer_all_negative_XV_constraints(self):
+        '''Enforce that any adjacent pair that does not have either an X or V constraint
+        must instead have a negative X and V constraint.
+        '''
+        adjacent_pairs = self.get_all_adjacent_pairs()
+        for pair in adjacent_pairs:
+            if pair not in self.__V_borders and pair not in self.__X_borders:
+                self.add_negative_V(*pair)
+                self.add_negative_X(*pair)
+
+
 class WindmillSolver(SudokuSolver):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), **kwargs):
+        super().__init__(size, box_dims, **kwargs)
+        self.problem = XVSudokuProblem(size, box_dims)
 
-    # Internals
-    def _as_Cell(self, cell:IntVar|int|Coords, col:int|None=None):
-        match cell:
-            case int():
-                assert isinstance(col,int)
-                return self.problem.cell(cell, col)
-            case tuple():
-                return self.problem.cell(*cell)
-            case IntVar():
-                return cell
-            case _:
-                print("This should never be reached")
-
-    def _add_V(self, cell1: IntVar, cell2: IntVar):
-        self.problem.model.add(cell1 + cell2 == 5)    
-
-    def _add_negative_V(self, cell1:IntVar, cell2:IntVar):
-        self.problem.model.add(cell1 + cell2 != 5)  
-
-    def _add_X(self, cell1: IntVar, cell2: IntVar):
-        self.problem.model.add(cell1 + cell2 == 10)   
-
-    def _add_negative_X(self, cell1:IntVar, cell2:IntVar):
-        self.problem.model.add(cell1 + cell2 != 10)  
-
-    def _add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
+    def __add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
         self.problem.model.add(cell1 - cell2 != 1)
         self.problem.model.add(cell2 - cell1 != 1)
     
@@ -62,65 +114,128 @@ class WindmillSolver(SudokuSolver):
     def cell(self, row: int, col: int) -> IntVar:
         return self.problem.cell(row,col)
 
-    def get_all_adjacent_pairs(self):
+    def get_all_adjacent_pairs(self) -> list[tuple[tuple[int,int],tuple[int,int]]]:
         return self.problem.get_all_adjacent_pairs()
 
-    def add_V(self, cell1: Coords|IntVar, cell2: Coords|IntVar):
-        return self._add_V(self._as_Cell(cell1), self._as_Cell(cell2))
+    def add_V(self, cell1: Coords, cell2: Coords):
+        return self.problem.add_V(cell1, cell2)
 
-    def add_negative_V(self, cell1: Coords|IntVar, cell2: Coords|IntVar):
-        return self._add_negative_V(self._as_Cell(cell1), self._as_Cell(cell2))
+    def add_negative_V(self, cell1: Coords, cell2: Coords):
+        return self.problem.add_negative_V(cell1, cell2)
         
-    def add_X(self, cell1: Coords|IntVar, cell2: Coords|IntVar):
-        return self._add_X(self._as_Cell(cell1), self._as_Cell(cell2))
+    def add_X(self, cell1: Coords, cell2: Coords):
+            return self.problem.add_X(cell1, cell2)
+    
+    def add_negative_X(self, cell1: Coords, cell2: Coords):
+        return self.problem.add_negative_X(cell1, cell2)
 
-    def add_negative_X(self, cell1: Coords|IntVar, cell2: Coords|IntVar):
-        return self._add_negative_X(self._as_Cell(cell1), self._as_Cell(cell2))
+    def add_nonconsecutive(self, cell1: Coords, cell2: Coords):
+        return self.__add_nonconsecutive(self.problem.cell(*cell1), self.problem.cell(*cell2))
 
-    def add_nonconsecutive(self, cell1: Coords|IntVar, cell2: Coords|IntVar):
-        return self._add_nonconsecutive(self._as_Cell(cell1), self._as_Cell(cell2))
 
+    def add_XV_constraints(self
+                           , V_pairs:list[tuple[tuple[int,int], tuple[int,int]]]
+                           , X_pairs:list[tuple[tuple[int,int], tuple[int,int]]]
+                           , infer_negative_constraints:bool=True):
+        adjacent_pairs = self.get_all_adjacent_pairs()
+        for pair in adjacent_pairs:
+            if pair in V_pairs:
+                self.add_V(*pair)
+            elif pair in X_pairs:
+                self.add_X(*pair)
+            elif infer_negative_constraints:
+                # This ruleset states that any adjacent cells that DON'T have a V (or X) 
+                # between them MUST NOT add to 5 (or 10).
+                self.add_negative_V(*pair)
+                self.add_negative_X(*pair)
+
+    def add_circle_constraints(self, circle_cells:list[tuple[int,int]]):
+        # no two cells on yellow circle are consecutive
+        for a,b in it.combinations(circle_cells,2):
+            self.add_nonconsecutive(a,b)
 
             
-class BorderHighlightSolutionPrinter(SudokuSolutionPrinter):
+# class BorderHighlightSolutionPrinter(SudokuSolutionPrinter):
 
-    def __init__(self, problem:SudokuProblem
-                , v_pairs:list[CoordsPair]=[]
-                , x_pairs:list[CoordsPair]=[]
-                ):
-        super().__init__(problem.grid)
-        self._problem = problem
-        self._V = self._process_pairs(v_pairs)
-        self._X = self._process_pairs(x_pairs)
+#     def __init__(self, problem:SudokuProblem
+#                 , v_pairs:list[CoordsPair]=[]
+#                 , x_pairs:list[CoordsPair]=[]
+#                 ):
+#         super().__init__(problem.grid)
+#         self.__problem = problem
+#         self.__V = self.__process_pairs(v_pairs)
+#         self.__X = self.__process_pairs(x_pairs)
 
-    def _process_pairs(self, pairs:list[CoordsPair]=[]):
-        # cast to IntVars
-        X = [self._problem._as_canonical_cell_pair(c1,c2) for c1,c2 in pairs]
-        # grab leftmost cell of horizontal pairs and topmost cell of vertical pairs
-        horiz_pairs = [self._leftmost(c1,c2) for c1,c2 in self._horizontal_only(X)]
-        vert_pairs = [self._topmost(c1,c2) for c1,c2 in self._vertical_only(X)]
-        return horiz_pairs, vert_pairs
+#     def __process_pairs(self, pairs:list[CoordsPair]=[]):
+#         # cast to IntVars
+#         X = [self.__problem.as_canonical_cell_pair(c1,c2) for c1,c2 in pairs]
+#         # grab leftmost cell of horizontal pairs and topmost cell of vertical pairs
+#         horiz_pairs = [self.__leftmost(c1,c2) for c1,c2 in self.__horizontal_only(X)]
+#         vert_pairs = [self.__topmost(c1,c2) for c1,c2 in self.__vertical_only(X)]
+#         return horiz_pairs, vert_pairs
 
-    def _get_all_horizontal_pairs(self):
-        return self._problem.get_all_horizontal_pairs()
+#     def __get_all_horizontal_pairs(self):
+#         return self.__problem.get_all_horizontal_pairs()
 
-    def _get_all_vertical_pairs(self):
-        return self._problem.get_all_vertical_pairs()
+#     def __get_all_vertical_pairs(self):
+#         return self.__problem.get_all_vertical_pairs()
 
-    def _horizontal_only(self, cell_pairs:list[VarPair]) -> list[VarPair]:
-        return [cp for cp in cell_pairs if cp in self._get_all_horizontal_pairs()]
+#     def __horizontal_only(self, cell_pairs:list[VarPair]) -> list[VarPair]:
+#         return [cp for cp in cell_pairs if cp in self.__get_all_horizontal_pairs()]
 
-    def _vertical_only(self, cell_pairs:list[VarPair]) -> list[VarPair]:
-            return [cp for cp in cell_pairs if cp in self._get_all_vertical_pairs()]
+#     def __vertical_only(self, cell_pairs:list[VarPair]) -> list[VarPair]:
+#             return [cp for cp in cell_pairs if cp in self.__get_all_vertical_pairs()]
 
+#     def __leftmost(self, *cells:IntVar) -> IntVar:
+#         rows = [self.__problem.to_coordinates(cell)[0] for cell in cells]
+#         return cells[rows.index(min(rows))]
 
-    def _leftmost(self, *cells:IntVar) -> IntVar:
-        rows = [self._problem._to_coordinates(cell)[0] for cell in cells]
-        return cells[rows.index(min(rows))]
+#     def __topmost(self, *cells:IntVar) -> IntVar:
+#         cols = [self.__problem.to_coordinates(cell)[1] for cell in cells]
+#         return cells[cols.index(min(cols))]
 
-    def _topmost(self, *cells:IntVar) -> IntVar:
-        cols = [self._problem._to_coordinates(cell)[1] for cell in cells]
-        return cells[cols.index(min(cols))]
+#     def on_solution_callback(self):
+#         current_time = time()
+#         print(
+#             f"Solution {self._solution_count}, "
+#             f"time = {current_time - self._start_time} s"
+#         )
+#         self._solution_count += 1
+
+#         for row in self._grid:
+#             # Add 'v' or 'x' between applicable horizontal pairs
+#             for cell in row:
+#                 if cell in self.__V[0]:
+#                     end = " v "
+#                 elif cell in self.__X[0]:
+#                     end = " x "
+#                 else:
+#                     end = "   "
+#                 # Add single underline (v) or double underline (x) between applicable vertical pairs
+#                 if cell in self.__V[1]:
+#                     u1,u2 = "\033[4m", "\033[0m"
+#                 elif cell in self.__X[1]:
+#                     u1,u2 = "\033[21m", "\033[24m"
+#                 else:
+#                     u1,u2 = "",""
+#                 # print cell with highlights
+#                 print(f"{u1}{self.value(cell)}{u2}", end=end)
+#             print()
+#         print()
+
+class XVSudokuSolutionPrinter(cp_model.CpSolverSolutionCallback):
+
+    def __init__(self, problem:XVSudokuProblem):
+        cp_model.CpSolverSolutionCallback.__init__(self)
+        self.problem = problem
+        self.V = self.problem.V_borders
+        self.X = self.problem.X_borders
+        self._solution_count = 0
+        self._start_time = time()
+        
+    @property
+    def solution_count(self) -> int:
+        return self._solution_count
 
     def on_solution_callback(self):
         current_time = time()
@@ -130,19 +245,20 @@ class BorderHighlightSolutionPrinter(SudokuSolutionPrinter):
         )
         self._solution_count += 1
 
-        for row in self._grid:
+        for i, row in enumerate(self.problem.grid):
             # Add 'v' or 'x' between applicable horizontal pairs
-            for cell in row:
-                if cell in self._V[0]:
+            for j, cell in enumerate(row):
+                coords = (i+i,j+1) # one-indexed
+                if coords in self.V[0]:
                     end = " v "
-                elif cell in self._X[0]:
+                elif coords in self.X[0]:
                     end = " x "
                 else:
                     end = "   "
                 # Add single underline (v) or double underline (x) between applicable vertical pairs
-                if cell in self._V[1]:
+                if coords in self.V[1]:
                     u1,u2 = "\033[4m", "\033[0m"
-                elif cell in self._X[1]:
+                elif coords in self.X[1]:
                     u1,u2 = "\033[21m", "\033[24m"
                 else:
                     u1,u2 = "",""
@@ -150,6 +266,7 @@ class BorderHighlightSolutionPrinter(SudokuSolutionPrinter):
                 print(f"{u1}{self.value(cell)}{u2}", end=end)
             print()
         print()
+        
 
 
 def secret_windmill():
@@ -166,12 +283,11 @@ def secret_windmill():
         , [2, 7, 6, 8, 9, 3, 1, 5, 4]
     ]
 
-    S = WindmillSolver()
+    solver = WindmillSolver()
 
-    # no two cells on yellow circle are consecutive
+#     # no two cells on yellow circle are consecutive
     circle_cells = [(1,8),(1,9),(2,8),(2,9)]
-    for a,b in it.combinations(circle_cells,2):
-        S.add_nonconsecutive(a,b)
+    solver.add_circle_constraints(circle_cells)
 
     v_pairs = [
           ((2,2),(2,3))
@@ -179,49 +295,35 @@ def secret_windmill():
         , ((7,2),(8,2))
         , ((8,7),(8,8))
     ]
-    V_constraint_pairs = [S.problem._as_canonical_cell_pair(*pair) for pair in v_pairs]
-    # V_constraint_pairs = [(S.cell(*cell1),S.cell(*cell2)) for cell1,cell2 in v_pairs]
     x_pairs = [ 
           ((2,3), (3,3)) # vertical
         , ((3,3), (3,4)) # horizontal
         , ((3,4), (4,4)) # vertical
         , ((4,4), (4,5)) # horizontal
 
-        , ((3,8), (3,7)) # horizontal
-        , ((3,7), (4,7)) # vertical
-        , ((4,7), (4,6)) # horizontal
-        , ((4,6), (5,6)) # vertical
+        # , ((3,8), (3,7)) # horizontal
+        # , ((3,7), (4,7)) # vertical
+        # , ((4,7), (4,6)) # horizontal
+        # , ((4,6), (5,6)) # vertical
 
-        , ((5,4), (6,4)) # vertical
-        , ((6,4), (6,3)) # horizontal
-        , ((6,3), (7,3)) # vertical
-        , ((7,3), (7,2)) # horizontal
+        # , ((5,4), (6,4)) # vertical
+        # , ((6,4), (6,3)) # horizontal
+        # , ((6,3), (7,3)) # vertical
+        # , ((7,3), (7,2)) # horizontal
 
-        , ((6,5), (6,6)) # horizontal
-        , ((6,6), (7,6)) # vertical
-        , ((7,6), (7,7)) # horizontal
-        , ((7,7), (8,7)) # vertical
+        # , ((6,5), (6,6)) # horizontal
+        # , ((6,6), (7,6)) # vertical
+        # , ((7,6), (7,7)) # horizontal
+        # , ((7,7), (8,7)) # vertical
     ]
-    X_constraint_pairs = [S.problem._as_canonical_cell_pair(*pair) for pair in x_pairs]
+    
+    solver.add_XV_constraints(v_pairs, x_pairs, True)
 
-
-    adjacent_pairs = S.get_all_adjacent_pairs()
-    for pair in adjacent_pairs:
-        if pair in V_constraint_pairs:
-            S.add_V(*pair)
-        elif pair in X_constraint_pairs:
-            S.add_X(*pair)
-        # else:
-        #     # This ruleset states that any adjacent cells that DON'T have a V (or X) 
-        #     # between them MUST NOT add to 5 (or 10).
-        #     S.add_negative_V(*pair)
-        #     S.add_negative_X(*pair)
-
-    return S.solve(solution_printer=BorderHighlightSolutionPrinter(S.problem 
-                                                    , v_pairs=v_pairs
-                                                    , x_pairs=x_pairs
+    return solver.solve(solution_printer=XVSudokuSolutionPrinter(solver.problem
+    #                                                 # , v_pairs=v_pairs
+    #                                                 # , x_pairs=x_pairs
                                                     ))
-
+ 
 
         
 if __name__ == "__main__":
