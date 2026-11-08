@@ -1,6 +1,7 @@
 
 import functools as ft
 import itertools as it
+import re
 from time import time
 from typing import Any, Callable
 
@@ -68,9 +69,24 @@ class SudokuProblem:
     def get_all_adjacent_pairs(self) -> list[tuple[IntVar,IntVar]]:
         return self.get_all_horizontal_pairs() + self.get_all_vertical_pairs()
 
+
+    __coordinate_regex = re.compile(r"Cell\[" + r"(\d+)" + r"," + r"(\d+)" + r"\]")
+    def _to_coordinates(self, cell:IntVar) -> tuple[int,int]:
+        R = self.__coordinate_regex.search(cell.name)
+        assert R is not None
+        return int(R.group(1)),int(R.group(2))
+
+    def _as_canonical_cell_pair(self, cell1:IntVar|tuple[int,int], cell2:IntVar|tuple[int,int]) -> tuple[IntVar,IntVar]:
+        if isinstance(cell1,IntVar):
+            cell1 = self._to_coordinates(cell1)
+        if isinstance(cell2, IntVar):
+            cell2 = self._to_coordinates(cell2)
+        pair = sorted((cell1,cell2))
+        return (self.cell(*pair[0]), self.cell(*pair[1]))
+
     def add_given(self, row:int, col:int, val:int):
-            self.model.add(self.grid[row][col]==val)
-    
+                self.model.add(self.grid[row][col]==val)
+        
     def add_givens(self, givens:list[tuple[int,int,int]]):
         for row,col,val in givens:
             self.model.add(self.grid[row][col]==val)
