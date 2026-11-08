@@ -21,14 +21,14 @@ class SudokuProblem:
         assert all(n.is_integer() for n in (rows_of_boxes, cols_of_boxes))
         self.rows_of_boxes, self.cols_of_boxes = int(rows_of_boxes), int(cols_of_boxes)
         
-        self.__model_setup()
+        self._model_setup()
 
-    def __model_setup(self):
+    def _model_setup(self):
         self.model = cp_model.CpModel()
-        self.grid = self.__create_grid()
+        self.grid = self._create_grid()
         self.__add_sudoku_constraints()
 
-    def __create_grid(self):
+    def _create_grid(self):
         return [[self.model.new_int_var(1, self.grid_size, f"Cell[{r},{c}]") 
                         for c in range(self.grid_size)] for r in range(self.grid_size)]
 
@@ -60,10 +60,13 @@ class SudokuProblem:
     def cell(self, row:int, col:int) -> IntVar:
         return self.grid[row][col]
 
+    def get_all_horizontal_pairs(self) -> list[tuple[IntVar,IntVar]]:
+            return [(self.cell(r,c), self.cell(r,c+1)) for r,c in it.product(range(self.grid_size), range(self.grid_size-1))]
+    def get_all_vertical_pairs(self) -> list[tuple[IntVar,IntVar]]:
+        return [(self.cell(r,c), self.cell(r+1,c)) for r,c in it.product(range(self.grid_size-1), range(self.grid_size))]
+
     def get_all_adjacent_pairs(self) -> list[tuple[IntVar,IntVar]]:
-        horizontal_pairs = [(self.cell(r,c), self.cell(r,c+1)) for r,c in it.product(range(self.grid_size), range(self.grid_size-1))]
-        vertical_pairs = [(self.cell(r,c), self.cell(r+1,c)) for r,c in it.product(range(self.grid_size-1), range(self.grid_size))]
-        return horizontal_pairs + vertical_pairs
+        return self.get_all_horizontal_pairs() + self.get_all_vertical_pairs()
 
     def add_given(self, row:int, col:int, val:int):
             self.model.add(self.grid[row][col]==val)
@@ -75,11 +78,11 @@ class SudokuProblem:
 
 class OneIndexedSudokuProblem(SudokuProblem):
 
-    def __create_grid(self):
+    def _create_grid(self):
         return [[self.model.new_int_var(1, self.grid_size, f"Cell[{r+1},{c+1}]") 
                         for c in range(self.grid_size)] for r in range(self.grid_size)]
 
-    def __add_sudoku_constraints(self):
+    def _add_sudoku_constraints(self):
         for r in range(self.grid_size):
             self.model.add_all_different(super().row(r))
         for c in range(self.grid_size):
@@ -148,25 +151,25 @@ class SudokuSolver:
 class SudokuSolutionPrinter(cp_model.CpSolverSolutionCallback):
     """Print intermediate solutions."""
 
-    def __init__(self, grid: list[list[cp_model.IntVar]]):
+    def __init__(self, grid: list[list[IntVar]]):
         cp_model.CpSolverSolutionCallback.__init__(self)
-        self.__grid = grid
-        self.__solution_count = 0
-        self.__start_time = time()
+        self._grid = grid
+        self._solution_count = 0
+        self._start_time = time()
 
     @property
     def solution_count(self) -> int:
-        return self.__solution_count
+        return self._solution_count
 
     def on_solution_callback(self):
         current_time = time()
         print(
-            f"Solution {self.__solution_count}, "
-            f"time = {current_time - self.__start_time} s"
+            f"Solution {self._solution_count}, "
+            f"time = {current_time - self._start_time} s"
         )
-        self.__solution_count += 1
+        self._solution_count += 1
 
-        for row in self.__grid:
+        for row in self._grid:
             for cell in row:
                 print(self.value(cell), end="  ")
             print()

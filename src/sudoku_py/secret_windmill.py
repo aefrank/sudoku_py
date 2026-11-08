@@ -11,20 +11,26 @@ If two digits have a V between them, they sum to 5. If not, they don't.
 No two digits on the yellow circle may be consecutive.
 """
 import itertools as it
+import re
+from time import time
 
 from ortools.sat.python import cp_model
 from ortools.sat.python.cp_model_helper import IntVar
 
-from sudoku_py.sudoku import SudokuSolver
+from sudoku_py.sudoku import SudokuProblem, SudokuSolver, SudokuSolutionPrinter
+
+Coordinate = tuple[int,int]
+CoordinatePair = tuple[Coordinate,Coordinate]
+IntVarPair = tuple[IntVar,IntVar] 
 
 
-class SudokuSolverPlus(SudokuSolver):
+class WindmillSolver(SudokuSolver):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     # Internals
-    def __as_Cell(self, cell:IntVar|int|tuple[int,int], col:int|None=None):
+    def _as_Cell(self, cell:IntVar|int|Coordinate, col:int|None=None):
         match cell:
             case int():
                 assert isinstance(col,int)
@@ -36,19 +42,19 @@ class SudokuSolverPlus(SudokuSolver):
             case _:
                 print("This should never be reached")
 
-    def __add_V(self, cell1: IntVar, cell2: IntVar):
+    def _add_V(self, cell1: IntVar, cell2: IntVar):
         self.problem.model.add(cell1 + cell2 == 5)    
 
-    def __add_negative_V(self, cell1:IntVar, cell2:IntVar):
+    def _add_negative_V(self, cell1:IntVar, cell2:IntVar):
         self.problem.model.add(cell1 + cell2 != 5)  
 
-    def __add_X(self, cell1: IntVar, cell2: IntVar):
+    def _add_X(self, cell1: IntVar, cell2: IntVar):
         self.problem.model.add(cell1 + cell2 == 10)   
 
-    def __add_negative_X(self, cell1:IntVar, cell2:IntVar):
+    def _add_negative_X(self, cell1:IntVar, cell2:IntVar):
         self.problem.model.add(cell1 + cell2 != 10)  
 
-    def __add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
+    def _add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
         self.problem.model.add(cell1 - cell2 != 1)
         self.problem.model.add(cell2 - cell1 != 1)
     
@@ -59,28 +65,102 @@ class SudokuSolverPlus(SudokuSolver):
     def get_all_adjacent_pairs(self):
         return self.problem.get_all_adjacent_pairs()
 
-    def add_V(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
-        return self.__add_V(self.__as_Cell(cell1), self.__as_Cell(cell2))
+    def add_V(self, cell1: Coordinate|IntVar, cell2: Coordinate|IntVar):
+        return self._add_V(self._as_Cell(cell1), self._as_Cell(cell2))
 
-    def add_negative_V(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
-        return self.__add_negative_V(self.__as_Cell(cell1), self.__as_Cell(cell2))
+    def add_negative_V(self, cell1: Coordinate|IntVar, cell2: Coordinate|IntVar):
+        return self._add_negative_V(self._as_Cell(cell1), self._as_Cell(cell2))
         
-    def add_X(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
-        return self.__add_X(self.__as_Cell(cell1), self.__as_Cell(cell2))
+    def add_X(self, cell1: Coordinate|IntVar, cell2: Coordinate|IntVar):
+        return self._add_X(self._as_Cell(cell1), self._as_Cell(cell2))
 
-    def add_negative_X(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
-        return self.__add_negative_X(self.__as_Cell(cell1), self.__as_Cell(cell2))
+    def add_negative_X(self, cell1: Coordinate|IntVar, cell2: Coordinate|IntVar):
+        return self._add_negative_X(self._as_Cell(cell1), self._as_Cell(cell2))
 
-    def add_nonconsecutive(self, cell1: tuple[int,int]|IntVar, cell2: tuple[int,int]|IntVar):
-        return self.__add_nonconsecutive(self.__as_Cell(cell1), self.__as_Cell(cell2))
+    def add_nonconsecutive(self, cell1: Coordinate|IntVar, cell2: Coordinate|IntVar):
+        return self._add_nonconsecutive(self._as_Cell(cell1), self._as_Cell(cell2))
 
-    
+
             
+class BorderHighlightSolutionPrinter(SudokuSolutionPrinter):
 
+    def __init__(self, problem:SudokuProblem
+                , v_pairs:list[CoordinatePair]=[]
+                , x_pairs:list[CoordinatePair]=[]
+                ):
+        super().__init__(problem.grid)
+        self._problem = problem
+        self._V = self._process_pairs(v_pairs)
+        self._X = self._process_pairs(x_pairs)
+
+    def _process_pairs(self, pairs:list[CoordinatePair]=[]):
+        # cast to IntVars
+        X = [(self._problem.cell(*c1),self._problem.cell(*c2)) for c1,c2 in pairs]
+        # grab leftmost cell of horizontal pairs and topmost cell of vertical pairs
+        horiz_pairs = [self._leftmost(c1,c2) for c1,c2 in self._horizontal_only(X)]
+        vert_pairs = [self._topmost(c1,c2) for c1,c2 in self._vertical_only(X)]
+        return horiz_pairs, vert_pairs
+
+    def _get_all_horizontal_pairs(self):
+        return self._problem.get_all_horizontal_pairs()
+
+    def _get_all_vertical_pairs(self):
+        return self._problem.get_all_vertical_pairs()
+
+    def _horizontal_only(self, cell_pairs:list[IntVarPair]) -> list[IntVarPair]:
+        return [cp for cp in cell_pairs if cp in self._get_all_horizontal_pairs()]
+
+    def _vertical_only(self, cell_pairs:list[IntVarPair]) -> list[IntVarPair]:
+            return [cp for cp in cell_pairs if cp in self._get_all_vertical_pairs()]
+
+    __coordinate_regex = re.compile(r"Cell\[" + r"(\d+)" + r"," + r"(\d+)" + r"\]")
+
+    def _leftmost(self, *cells:IntVar):
+        matches = [self.__coordinate_regex.search(cell.name) for cell in cells]
+        for m in matches:
+            assert m is not None
+        rows = [int(m.group(1)) for m in matches]  # pyright: ignore[reportOptionalMemberAccess]
+        return cells[rows.index(min(rows))]
+
+    def _topmost(self, *cells:IntVar):
+        matches = [self.__coordinate_regex.search(cell.name) for cell in cells]
+        for m in matches:
+            assert m is not None
+        cols = [int(m.group(2)) for m in matches]  # pyright: ignore[reportOptionalMemberAccess]
+        return cells[cols.index(min(cols))]
+
+    def on_solution_callback(self):
+        current_time = time()
+        print(
+            f"Solution {self._solution_count}, "
+            f"time = {current_time - self._start_time} s"
+        )
+        self._solution_count += 1
+
+        for row in self._grid:
+            # Add 'v' or 'x' between applicable horizontal pairs
+            for cell in row:
+                if cell in self._V[0]:
+                    end = " v "
+                elif cell in self._X[0]:
+                    end = " x "
+                else:
+                    end = "   "
+                # Add single underline (v) or double underline (x) between applicable vertical pairs
+                if cell in self._V[0]:
+                    u1,u2 = "\033[4m", "\033[0m"
+                elif cell in self._X[0]:
+                    u1,u2 = "\033[21m", "\033[24m"
+                else:
+                    u1,u2 = "",""
+                # print cell with highlights
+                print(f"{u1}{self.value(cell)}{u2}", end=end)
+            print()
+        print()
 
 
 def secret_windmill():
-    S = SudokuSolverPlus()
+    S = WindmillSolver()
 
     # no two cells on yellow circle are consecutive
     circle_cells = [(1,8),(1,9),(2,8),(2,9)]
@@ -130,7 +210,10 @@ def secret_windmill():
         #     S.add_negative_V(*pair)
         #     S.add_negative_X(*pair)
 
-    return S.solve()
+    return S.solve(solution_printer=BorderHighlightSolutionPrinter(S.problem 
+                                                    , v_pairs=v_pairs
+                                                    , x_pairs=x_pairs
+                                                    ))
 
 
         
