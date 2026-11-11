@@ -1,6 +1,7 @@
 
 from collections.abc import Generator
 import functools as ft
+from itertools import product
 from time import time
 from typing import Any, Generic, TypeVar
 
@@ -120,10 +121,10 @@ class SudokuGridPlus(SudokuGrid[T]):
         return sudoku_grid
 
     def get_all_horizontal_pairs(self) -> list[tuple[T,T]]:
-        return [(self.cell(r,c), self.cell(r,c+1)) for r,c in it.product(range(self.size), range(self.size-1))]
+        return [(self.cell(r,c), self.cell(r,c+1)) for r,c in product(range(self.size), range(self.size-1))]
     
     def get_all_vertical_pairs(self) -> list[tuple[T,T]]:
-        return [(self.cell(r,c), self.cell(r+1,c)) for r,c in it.product(range(self.size-1), range(self.size))]
+        return [(self.cell(r,c), self.cell(r+1,c)) for r,c in product(range(self.size-1), range(self.size))]
     
     def get_all_adjacent_pairs(self) -> list[tuple[T,T]]:
         return self.get_all_horizontal_pairs() + self.get_all_vertical_pairs()
