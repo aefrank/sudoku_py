@@ -45,11 +45,12 @@ class XVSudokuProblem(OneIndexedSudokuProblem):
     def __add_negative_X_constraint(self, cell1:CellVar, cell2:CellVar):
         self.model.add(cell1 + cell2 != 10)
 
-    def __is_horizontal_adjacent_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]) -> bool:
-        return cell1[0]-cell2[0]==0 and abs(cell1[1]-cell2[1])==1
 
-    def __is_vertical_adjacent_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]) -> bool:
-        return abs(cell1[0]-cell2[0])==1 and cell1[1]-cell2[1]==0
+    def __is_horizontal_adjacent_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        return (cell1[0]-cell2[0])==0 and (cell1[1]-cell2[1])!=0
+
+    def __is_vertical_adjacent_pair(self, cell1:tuple[int,int], cell2:tuple[int,int]):
+        return (cell1[0]-cell2[0])!=0 and (cell1[1]-cell2[1])==0
     
         
     def __add_V_border(self, cell1:tuple[int,int], cell2:tuple[int,int]):

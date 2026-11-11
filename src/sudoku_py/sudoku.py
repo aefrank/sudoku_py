@@ -130,10 +130,10 @@ class SudokuProblem(__SudokuProblem):
         return [(self.to_coordinates(cell1), self.to_coordinates(cell2)) for cell1,cell2 in self.__get_all_adjacent_pairs()]
 
     def add_given(self, row:int, col:int, val:int):
-        return self.__add_given(self.cell(row,col), val)
+        return self.__add_given(self.__cell(row,col), val)
         
     def add_givens(self, givens:list[tuple[int,int,int]]):
-        return self.__add_givens([(self.cell(r,c),v) for r,c,v in givens])
+        return self.__add_givens([(self.__cell(r,c),v) for r,c,v in givens])
 
 
 
