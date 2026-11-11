@@ -1,10 +1,8 @@
 
 from collections.abc import Generator
 import functools as ft
-import itertools as it
-import re
 from time import time
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from ortools.sat.python.cp_model import CpModel, CpSolver, CpSolverSolutionCallback
 from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
@@ -210,7 +208,7 @@ class SudokuSolutionPrinter(CpSolverSolutionCallback):
 
 
 
-def example1():
+def example1() -> tuple[CpSolver, CpSolverStatus]:
     model = SudokuModel(6, (2,3))
     givens = [
               ((1,4),1), ((1,6),6)

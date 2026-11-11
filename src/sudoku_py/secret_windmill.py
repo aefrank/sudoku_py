@@ -11,17 +11,11 @@ If two digits have a V between them, they sum to 5. If not, they don't.
 No two digits on the yellow circle may be consecutive.
 """
 import itertools as it
-import re
 from time import time
 
 from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback
-from ortools.sat.python.cp_model_helper import IntVar
+from sudoku_py.sudoku import SudokuModel, CellVar
 
-from sudoku_py.sudoku import SudokuModel, SudokuSolutionPrinter, CellVar
-
-Coords = tuple[int,int]
-CoordsPair = tuple[Coords,Coords]
-VarPair = tuple[IntVar,IntVar] 
 
 
 class XVSudokuModel(SudokuModel):
