@@ -249,31 +249,46 @@ class XVSolutionPrinter(CpSolverSolutionCallback):
 
     def __init__(self
                  , problem: SudokuProblem
-                 , v_constraints:list[VBorder]=[]
-                 , x_constraints:list[XBorder]=[]
+                #  , v_constraints:list[VBorder]=[]
+                #  , x_constraints:list[XBorder]=[]
                  , correct_solution:list[list[int]]|None=None
                 ):
         CpSolverSolutionCallback.__init__(self)
         self.model = problem.model
         self.grid = problem.grid
+        self.v_borders, self.x_borders = self.get_xv(*problem.constraints)
+        self.__correct_solution = correct_solution
+        
         self._solution_count = 0
         self._start_time = time()
-        self.__correct_solution = correct_solution
-        is_horizontal = lambda border_constraint: border_constraint.is_horizontal
-        v_horiz, v_vert = partition(v_constraints, is_horizontal)
-        self.v_borders = ([constraint.cells[0] for constraint in v_horiz], [constraint.cells[0] for constraint in v_vert])
-        x_horiz, x_vert = partition(x_constraints, is_horizontal)
-        self.x_borders = ([constraint.cells[0] for constraint in x_horiz], [constraint.cells[0] for constraint in x_vert])
+
+
+    def get_xv(self, *constraints:Constraint) -> tuple[tuple[set[XBorder], set[XBorder]], tuple[set[VBorder], set[VBorder]]]:
+        x_constraints:tuple[set[XBorder], set[XBorder]] = (set(), set())
+        v_constraints:tuple[set[VBorder], set[VBorder]] = (set(), set())
+        for constraint in constraints:
+            if isinstance(constraint, XBorder):
+                if constraint.is_horizontal:
+                    x_constraints[0].add(constraint)
+                else:
+                    x_constraints[1].add(constraint)
+            elif isinstance(constraint, VBorder):
+                if constraint.is_horizontal:
+                    v_constraints[0].add(constraint)
+                else:
+                    v_constraints[1].add(constraint)
+        return x_constraints, v_constraints
+
         
     @property
     def solution_count(self) -> int:
         return self._solution_count
 
-    def check_cell(self, i, j, val):
+    def check_cell(self, i, j, val) -> bool:
         assert self.__correct_solution is not None
         return self.__correct_solution[i][j] == val
 
-    def print_cell(self, cell:Coords, current_string:str=""):
+    def print_cell(self, cell:Coords):
         # HORIZONTAL ANNOTATIONS
         if cell in self.v_borders[0]:
             end = " v "

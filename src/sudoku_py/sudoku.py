@@ -3,10 +3,12 @@ from collections.abc import Generator
 import functools as ft
 from itertools import product
 from time import time
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 
 from ortools.sat.python.cp_model import CpModel, CpSolver, CpSolverSolutionCallback
 from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
+
+from sudoku_py.constraints import Constraint
 
 CellVar = IntVar
 T = TypeVar("T")
@@ -136,45 +138,28 @@ class SudokuGrid(BaseSudokuGrid[T]):
         return self.same_col(cell1,cell2) and (abs(self.get_row(cell1)-self.get_row(cell2))==1)
 
 
-class HasCpModel(Protocol):
+
+class SudokuProblem:
     model: CpModel
+    grid: SudokuGrid
+    constraints:list[Constraint]
 
-class Rule:
-    def __init__(self, grid:SudokuGrid):
-        self.grid = grid
+    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True):
+        self.model = CpModel()
+        self.grid = self.create_grid(size, box_dims, one_indexed_cell_names)
 
-    def __set_name__(self, owner:HasCpModel, name):
-        self._model = owner.model
-        setattr(owner, name, self)
+    def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGrid[CellVar]:
+        os = 1 if one_indexed_cell_names else 0
+        grid = [[self.model.new_int_var(1, size, f"Cell[{r+os},{c+os}]") 
+                for c in range(size)] 
+                for r in range(size)]
+        return SudokuGrid.from_list(grid, box_dims)
 
-class SudokuBasics(Rule):
+    def apply_constraints(self):
+        Constraint.apply_constraints(self.model, self.grid, *self.constraints)
 
     
-    
-
-    @staticmethod
-    def apply_sudoku_constraint(model:SudokuModel, grid:SudokuGrid):
-        for row in grid.rows():
-            model.add_all_different(row)
-        for col in grid.cols():
-            model.add_all_different(col)
-        for box in grid.boxes():
-            box_cells = ft.reduce(lambda x,y: x+y, box)
-            model.add_all_different(box_cells)
-
-    @staticmethod
-    def add_given(model:SudokuModel, cell:CellVar, val:int):
-        self.add(cell == val)
-                    
-    @staticmethod
-    def add_givens(self, givens:list[tuple[CellVar,int]]):
-        for cell, val in givens:
-            self.add(cell == val)
-
-    @staticmethod
-    def add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
-        self.add(cell1 - cell2 != 1)
-        self.add(cell2 - cell1 != 1)
+        
 
 
     
