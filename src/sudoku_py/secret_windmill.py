@@ -16,7 +16,7 @@ from time import time
 
 from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback
 
-from sudoku_py.constraints import Constraint, Coords, NegativeVBorder, NegativeXBorder, Nonconsecutive, SudokuConstraint, VBorder, XBorder, sort_cells
+from sudoku_py.sudoku import Constraint, Coords, NegativeVBorder, NegativeXBorder, Nonconsecutive, SudokuConstraint, VBorder, XBorder, sort_cells
 from sudoku_py.sudoku import SudokuProblem
 
 ############################################################

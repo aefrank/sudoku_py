@@ -1,17 +1,78 @@
 
-from collections.abc import Generator
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator
+from copy import deepcopy
+from dataclasses import dataclass, field
 import functools as ft
-from itertools import product
+from itertools import filterfalse, product, tee
 from time import time
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Iterable, NewType, Optional, TypeIs, TypeVar, overload
 
-from ortools.sat.python.cp_model import CpModel, CpSolver, CpSolverSolutionCallback
-from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
+from ortools.sat.python.cp_model import CpModel
+from ortools.sat.python.cp_model_helper import IntVar
 
-from sudoku_py.constraints import Constraint
 
-CellVar = IntVar
+
+############        CELL COORDINATES   ########################
+
 T = TypeVar("T")
+CellVar = IntVar
+
+type Coords = tuple[int,int]
+def is_Coords(x:Any) -> TypeIs[Coords]:
+    if isinstance(x, tuple):
+        if len(x)==2 and isinstance(x[0],int) and isinstance(x[1],int):
+            return True
+    return False
+
+
+############        CELL ADJACENCY      ########################
+AdjacentCellPair = NewType("AdjacentCellPair", tuple[Coords, Coords])
+@overload
+def is_adjacent(cell1:Coords, cell2:Coords, /) -> bool: ...
+@overload 
+def is_adjacent(cell_pair:tuple[Coords,Coords], /) -> TypeIs[AdjacentCellPair]: ...
+def is_adjacent(arg0:Coords|tuple[Coords,Coords], arg1:Optional[Coords]=None) -> bool:
+    if is_Coords(arg0):
+        if not is_Coords(arg1):
+            raise ValueError(arg1)
+        dr, dc = abs(arg0[0]-arg1[0]), abs(arg0[1]-arg1[1])
+        return dr+dc==1 
+    else:
+        if is_Coords(arg0[0]) and is_Coords(arg0[1]):
+            return is_adjacent(arg0[0], arg0[1])
+        else:
+            raise ValueError(arg0, arg1)
+
+def verify_adjacency(pair:tuple[Coords,Coords]) -> AdjacentCellPair:
+    if is_adjacent(pair):
+        return pair
+    else:
+        raise ValueError(pair)
+
+
+############        MANIPULATING CELL ITERABLES   ########################
+@overload
+def sort_cells(cell1:Coords, cell2:Coords, /) -> tuple[Coords, Coords]: ...
+@overload
+def sort_cells(*cells:Coords) -> tuple[Coords, ...]: ...
+def sort_cells(*cells:Coords) -> tuple[Coords, ...]:
+    ordered = sorted(cells)
+    if isinstance(cells,tuple):
+        return (ordered[0], ordered[1])
+    else:
+        return tuple(ordered)
+
+T = TypeVar('T')
+def partition(iterable:Iterable[T], pred:Callable[[T],bool]) -> tuple[filter[T], filterfalse[T]]:
+    """Splits an iterable into two: one matching pred, one not matching pred."""
+    t1, t2 = tee(iterable)
+    return filter(pred, t1), filterfalse(pred, t2)
+
+
+############################################################
+############## VARIABLE STORAGE: SUDOKUGRID ################
+############################################################
 
 class BaseSudokuGrid(Generic[T]):
     def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3)):
@@ -137,16 +198,177 @@ class SudokuGrid(BaseSudokuGrid[T]):
     def is_vertical_neighbor(self, cell1:T, cell2:T) -> bool:
         return self.same_col(cell1,cell2) and (abs(self.get_row(cell1)-self.get_row(cell2))==1)
 
+############################################################
+####################### CONSTRAINTS ########################
+############################################################
 
+
+
+############        ABSTRACT CONSTRAINTS   ########################
+class Constraint(ABC):
+    @abstractmethod
+    def apply(self, model:CpModel, grid:SudokuGrid) -> None: ...
+
+    @staticmethod
+    def apply_constraints(model:CpModel, grid:SudokuGrid, *constraints:Constraint) -> None:
+        for constraint in constraints:
+            constraint.apply(model, grid)
+
+@ft.total_ordering
+class MultiCellConstraint(Constraint):
+    _cells:tuple[Coords, ...]
+
+    def __init__(self, *cells:Coords):
+        self._cells = sort_cells(*cells)
+
+    @property
+    def cells(self) -> tuple[Coords, ...]:
+        return self._cells
+
+    def __lt__(self, other:object) -> bool: 
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cells < other.cells
+
+    def __eq__(self, other:object) -> bool:
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cells == other.cells
+
+    def __repr__(self) -> str:
+        kws = [f"{key}={value!r}" if key != "_cells" else f"cells={self.cells!r}" for key, value in self.__dict__.items()]
+        return "{}({})".format(type(self).__name__, ", ".join(kws))
+
+@dataclass
+@ft.total_ordering
+class SingleCellConstraint(Constraint):
+    cell:Coords
+
+    def __lt__(self, other:object) -> bool: 
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cell < other.cell
+
+    def __eq__(self, other:object) -> bool:
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cell == other.cell
+
+
+class TwoCellConstraint(MultiCellConstraint):
+    _cells:tuple[Coords, Coords] = field(init=False, repr=False)
+
+    @abstractmethod
+    def __init__(self, cell1:Coords, cell2:Coords):
+        self.cells = sort_cells(cell1, cell2)
+
+    @property
+    def cells(self) -> tuple[Coords,Coords]:
+        return sort_cells(*self._cells)
+
+    @cells.setter
+    def cells(self, pair:tuple[Coords,Coords]):
+        self._cells = sort_cells(*pair)
+
+
+class BorderConstraint(TwoCellConstraint):
+    _cells:AdjacentCellPair
+    def __init__(self, cell1:Coords, cell2:Coords):
+        assert is_adjacent(cell1, cell2)
+        cells = sort_cells(cell1, cell2)
+        if is_adjacent(cells):
+            self.cells = cells
+
+    @property
+    def cells(self) -> AdjacentCellPair:
+        return verify_adjacency(sort_cells(*self._cells))
+
+    @cells.setter
+    def cells(self, adjacent_cell_pair:AdjacentCellPair):
+        self._cells = verify_adjacency(sort_cells(*adjacent_cell_pair))
+
+    @property
+    def is_horizontal(self) -> bool:
+        cell1, cell2 = self.cells
+        dr, dc = cell2[0]-cell1[0], cell2[1]-cell1[1]
+        return dr==0 and abs(dc)==1
+
+
+############################################################
+############ CONCRETE CONSTRAINT CLASSES ###################
+############################################################
+
+class SudokuConstraintType(Constraint):
+    @staticmethod
+    def apply(model: CpModel, grid: SudokuGrid) -> None:
+        for row in grid.rows():
+            model.add_all_different(row)
+        for col in grid.cols():
+            model.add_all_different(col)
+        for box in grid.boxes():
+            box_cells = ft.reduce(lambda x,y: x+y, box)
+            model.add_all_different(box_cells)
+
+    instance = None
+    def __new__(cls):
+        if cls.instance is None:
+            cls.instance = super().__new__(cls)
+        return cls.instance
+
+SudokuConstraint = SudokuConstraintType()
+
+@dataclass
+class Given(SingleCellConstraint):
+    value: int
+
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        model.add(grid.cell(*self.cell)==self.value)
+
+class Nonconsecutive(TwoCellConstraint):
+    def __init__(self, cell1:Coords, cell2:Coords):
+        self.cells = sort_cells(cell1, cell2)
+
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
+        model.add(cell1 - cell2 != 1)
+        model.add(cell2 - cell1 != 1)
+
+class XBorder(BorderConstraint):
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
+        model.add(cell1 + cell2 == 10)
+
+class VBorder(BorderConstraint):
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
+        model.add(cell1 + cell2 == 5)
+
+class NegativeXBorder(BorderConstraint):
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
+        model.add(cell1 + cell2 != 10)
+
+class NegativeVBorder(BorderConstraint):
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
+        model.add(cell1 + cell2 != 5)
+
+
+
+
+############################################################
+###################### SUDOKU PROBLEM ######################
+############################################################
 
 class SudokuProblem:
     model: CpModel
     grid: SudokuGrid
-    constraints:list[Constraint]
+    _constraints:list[Constraint]
 
     def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True):
         self.model = CpModel()
         self.grid = self.create_grid(size, box_dims, one_indexed_cell_names)
+        self._constraints = [SudokuConstraint]
 
     def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGrid[CellVar]:
         os = 1 if one_indexed_cell_names else 0
@@ -155,8 +377,20 @@ class SudokuProblem:
                 for r in range(size)]
         return SudokuGrid.from_list(grid, box_dims)
 
+    @property
+    def constraints(self) -> list[Constraint]:
+        return self._constraints
+
+    def add_constraint(self, constraint:Constraint):
+        self._constraints.append(constraint)
+
+    def add_constraints(self, *constraints:Constraint):
+        for constraint in constraints:
+            if constraint not in self._constraints:
+                self._constraints.append(constraint)
+
     def apply_constraints(self):
-        Constraint.apply_constraints(self.model, self.grid, *self.constraints)
+        Constraint.apply_constraints(self.model, self.grid, *self._constraints)
 
     
         
@@ -164,109 +398,5 @@ class SudokuProblem:
 
     
 
-class SudokuModel(CpModel):
-    """
-    NOTE: All methods of this class are ZERO-INDEXED!
-    """
-
-    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True):
-        super().__init__()
-        self.grid = self.create_grid(size, box_dims, one_indexed_cell_names)
-        self.add_sudoku_constraints()
-
-    def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGrid[CellVar]:
-        os = 1 if one_indexed_cell_names else 0
-        grid = [[self.new_int_var(1, size, f"Cell[{r+os},{c+os}]") 
-                for c in range(size)] 
-                for r in range(size)]
-        return SudokuGrid.from_list(grid, box_dims)
-
-    def add_sudoku_constraints(self):
-        for row in self.grid.rows():
-            self.add_all_different(row)
-        for col in self.grid.cols():
-            self.add_all_different(col)
-        for box in self.grid.boxes():
-            box_cells = ft.reduce(lambda x,y: x+y, box)
-            self.add_all_different(box_cells)
-
-    def sort_cells(self, cell1:CellVar, cell2:CellVar) -> tuple[CellVar,CellVar]:
-        pair = sorted((self.grid.index(cell1),self.grid.index(cell2)))
-        return (self.grid.cell(*pair[0]), self.grid.cell(*pair[1]))
-
-    def add_given(self, cell:CellVar, val:int):
-        self.add(cell == val)
-                
-    def add_givens(self, givens:list[tuple[CellVar,int]]):
-        for cell, val in givens:
-            self.add(cell == val)
-
-    def add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
-        self.add(cell1 - cell2 != 1)
-        self.add(cell2 - cell1 != 1)
-
-class SudokuSolutionPrinter(CpSolverSolutionCallback):
-    """Print intermediate solutions."""
-
-    def __init__(self, grid: list[list[IntVar]]):
-        CpSolverSolutionCallback.__init__(self)
-        self._grid = grid
-        self._solution_count = 0
-        self._start_time = time()
-
-    @property
-    def solution_count(self) -> int:
-        return self._solution_count
-
-    def on_solution_callback(self):
-        current_time = time()
-        print(
-            f"Solution {self._solution_count}, "
-            f"time = {current_time - self._start_time} s"
-        )
-        self._solution_count += 1
-
-        for row in self._grid:
-            for cell in row:
-                print(self.value(cell), end="  ")
-            print()
-        print()
-
-
-
-
-def example1() -> tuple[CpSolver, CpSolverStatus]:
-    model = SudokuModel(6, (2,3))
-    givens = [
-              ((1,4),1), ((1,6),6)
-            , ((2,1),6), ((2,3),4)
-            , ((3,1),1), ((3,3),2)
-            , ((4,4),5), ((4,6),1)
-            , ((5,4),6), ((5,6),3)
-            , ((6,1),5), ((6,3),6)
-        ]
-    given_cells = [(model.grid.cell(r-1,c-1),v) for (r,c),v in givens]
-    model.add_givens(given_cells)
-
-    solver = CpSolver()
-    solution_printer = SudokuSolutionPrinter(model.grid.items)
-    status = solver.solve(model, solution_callback=solution_printer)
-    print("\nStatistics")
-    print(f"  conflicts      : {solver.num_conflicts}")
-    print(f"  branches       : {solver.num_branches}")
-    print(f"  wall time      : {solver.wall_time} s")
-    if hasattr(solution_printer, "solution_count"):
-        print(f"  solutions found: {solution_printer.solution_count}") # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
-    return solver, status
-
-
-def main():
-    example1()
-
-
-
-
-if __name__ == '__main__':
-    main()
 
 
