@@ -3,7 +3,7 @@ from collections.abc import Generator
 import functools as ft
 from itertools import product
 from time import time
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 from ortools.sat.python.cp_model import CpModel, CpSolver, CpSolverSolutionCallback
 from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
@@ -11,7 +11,7 @@ from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
 CellVar = IntVar
 T = TypeVar("T")
 
-class SudokuGrid(Generic[T]):
+class BaseSudokuGrid(Generic[T]):
     def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3)):
         self.size = size
         self.box_dims = box_dims
@@ -27,7 +27,7 @@ class SudokuGrid(Generic[T]):
         self.items = L
 
     @classmethod
-    def from_list(cls, L:list[list[T]], box_dims:tuple[int,int]=(3,3)) -> SudokuGrid[T]:
+    def from_list(cls, L:list[list[T]], box_dims:tuple[int,int]=(3,3)) -> BaseSudokuGrid[T]:
         sudoku_grid = cls(len(L), box_dims)
         sudoku_grid.populate_grid(L)
         return sudoku_grid
@@ -112,10 +112,10 @@ class SudokuGrid(Generic[T]):
     __populate_grid = populate_grid
 
 
-class SudokuGridPlus(SudokuGrid[T]):
+class SudokuGrid(BaseSudokuGrid[T]):
 
     @classmethod
-    def from_list(cls, L:list[list[T]], box_dims:tuple[int,int]=(3,3)) -> SudokuGridPlus[T]: 
+    def from_list(cls, L:list[list[T]], box_dims:tuple[int,int]=(3,3)) -> SudokuGrid[T]: 
         sudoku_grid = cls(len(L), box_dims)
         sudoku_grid.populate_grid(L)
         return sudoku_grid
@@ -135,6 +135,48 @@ class SudokuGridPlus(SudokuGrid[T]):
     def is_vertical_neighbor(self, cell1:T, cell2:T) -> bool:
         return self.same_col(cell1,cell2) and (abs(self.get_row(cell1)-self.get_row(cell2))==1)
 
+
+class HasCpModel(Protocol):
+    model: CpModel
+
+class Rule:
+    def __init__(self, grid:SudokuGrid):
+        self.grid = grid
+
+    def __set_name__(self, owner:HasCpModel, name):
+        self._model = owner.model
+        setattr(owner, name, self)
+
+class SudokuBasics(Rule):
+
+    
+    
+
+    @staticmethod
+    def apply_sudoku_constraint(model:SudokuModel, grid:SudokuGrid):
+        for row in grid.rows():
+            model.add_all_different(row)
+        for col in grid.cols():
+            model.add_all_different(col)
+        for box in grid.boxes():
+            box_cells = ft.reduce(lambda x,y: x+y, box)
+            model.add_all_different(box_cells)
+
+    @staticmethod
+    def add_given(model:SudokuModel, cell:CellVar, val:int):
+        self.add(cell == val)
+                    
+    @staticmethod
+    def add_givens(self, givens:list[tuple[CellVar,int]]):
+        for cell, val in givens:
+            self.add(cell == val)
+
+    @staticmethod
+    def add_nonconsecutive(self, cell1:IntVar, cell2:IntVar):
+        self.add(cell1 - cell2 != 1)
+        self.add(cell2 - cell1 != 1)
+
+
     
 
 class SudokuModel(CpModel):
@@ -147,13 +189,12 @@ class SudokuModel(CpModel):
         self.grid = self.create_grid(size, box_dims, one_indexed_cell_names)
         self.add_sudoku_constraints()
 
-
-    def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGridPlus[CellVar]:
+    def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGrid[CellVar]:
         os = 1 if one_indexed_cell_names else 0
         grid = [[self.new_int_var(1, size, f"Cell[{r+os},{c+os}]") 
                 for c in range(size)] 
                 for r in range(size)]
-        return SudokuGridPlus.from_list(grid, box_dims)
+        return SudokuGrid.from_list(grid, box_dims)
 
     def add_sudoku_constraints(self):
         for row in self.grid.rows():

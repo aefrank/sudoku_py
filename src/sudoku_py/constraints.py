@@ -7,9 +7,9 @@ from typing import Any, Iterable, NewType, Optional, TypeIs, TypeVar, overload
 
 from multipledispatch import dispatch
 import functools as ft
-from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback
+from ortools.sat.python.cp_model import CpModel, CpSolver, CpSolverSolutionCallback
 
-from sudoku_py.sudoku import SudokuGrid, SudokuModel
+from sudoku_py.sudoku import SudokuGrid, SudokuProblem
 
 """ 
 HOUSEKEEPING
@@ -84,10 +84,10 @@ def partition(iterable:Iterable[T], pred:Callable[[T],bool]) -> tuple[filter[T],
 
 class Constraint(ABC):
     @abstractmethod
-    def apply(self, model:SudokuModel, grid:SudokuGrid) -> None: ...
+    def apply(self, model:CpModel, grid:SudokuGrid) -> None: ...
 
     @staticmethod
-    def apply_constraints(model:SudokuModel, grid:SudokuGrid, *constraints:Constraint) -> None:
+    def apply_constraints(model:CpModel, grid:SudokuGrid, *constraints:Constraint) -> None:
         for constraint in constraints:
             constraint.apply(model, grid)
 
@@ -184,7 +184,7 @@ class BorderConstraint(TwoCellConstraint):
 
 class SudokuConstraintType(Constraint):
     @staticmethod
-    def apply(model: SudokuModel, grid: SudokuGrid) -> None:
+    def apply(model: CpModel, grid: SudokuGrid) -> None:
         for row in grid.rows():
             model.add_all_different(row)
         for col in grid.cols():
@@ -205,35 +205,35 @@ SudokuConstraint = SudokuConstraintType()
 class Given(SingleCellConstraint):
     value: int
 
-    def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         model.add(grid.cell(*self.cell)==self.value)
 
 class Nonconsecutive(TwoCellConstraint):
     def __init__(self, cell1:Coords, cell2:Coords):
         self.cells = sort_cells(cell1, cell2)
 
-    def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 - cell2 != 1)
         model.add(cell2 - cell1 != 1)
 
 class XBorder(BorderConstraint):
-    def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 10)
 
 class VBorder(BorderConstraint):
-    def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 5)
 
 class NegativeXBorder(BorderConstraint):
-    def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 10)
 
 class NegativeVBorder(BorderConstraint):
-    def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 5)
 
@@ -243,16 +243,19 @@ class NegativeVBorder(BorderConstraint):
 ################### EXAMPLE PROBLEM ########################
 ############################################################
 
+
+
 class XVSolutionPrinter(CpSolverSolutionCallback):
 
     def __init__(self
-                 , model:SudokuModel
+                 , problem: SudokuProblem
                  , v_constraints:list[VBorder]=[]
                  , x_constraints:list[XBorder]=[]
                  , correct_solution:list[list[int]]|None=None
                 ):
         CpSolverSolutionCallback.__init__(self)
-        self.model = model
+        self.model = problem.model
+        self.grid = problem.grid
         self._solution_count = 0
         self._start_time = time()
         self.__correct_solution = correct_solution
@@ -269,6 +272,27 @@ class XVSolutionPrinter(CpSolverSolutionCallback):
     def check_cell(self, i, j, val):
         assert self.__correct_solution is not None
         return self.__correct_solution[i][j] == val
+
+    def print_cell(self, cell:Coords, current_string:str=""):
+        # HORIZONTAL ANNOTATIONS
+        if cell in self.v_borders[0]:
+            end = " v "
+        elif cell in self.x_borders[0]:
+            end = " x "
+        else:
+            end = "   "
+        # VERTICAL ANNOTATIONS:
+        # Add single underline (v) or double underline (x) between applicable vertical pairs
+        if cell in self.v_borders[1]:
+            u1,u2 = "\033[4m", "\033[0m"
+        elif cell in self.x_borders[1]:
+            u1,u2 = "\033[21m", "\033[24m"
+        else:
+            u1,u2 = "",""
+        # print cell with highlights
+        val = self.value(self.grid.cell(*cell))
+        print(f"{u1}{val}{u2}{end}", end="")
+
     
     def on_solution_callback(self):
         current_time = time()
@@ -282,29 +306,12 @@ class XVSolutionPrinter(CpSolverSolutionCallback):
         if self.__correct_solution:
             correct = True
         
-        for i, row in enumerate(self.model.grid):
+        for i, row in enumerate(self.grid):
             # Add 'v' or 'x' between applicable horizontal pairs
             for j, cell in enumerate(row):
-                # HORIZONTAL ANNOTATIONS
-                if (i,j) in self.v_borders[0]:
-                    end = " v "
-                elif (i,j) in self.x_borders[0]:
-                    end = " x "
-                else:
-                    end = "   "
-                # VERTICAL ANNOTATIONS:
-                # Add single underline (v) or double underline (x) between applicable vertical pairs
-                if (i,j) in self.v_borders[1]:
-                    u1,u2 = "\033[4m", "\033[0m"
-                elif (i,j) in self.x_borders[1]:
-                    u1,u2 = "\033[21m", "\033[24m"
-                else:
-                    u1,u2 = "",""
-                # print cell with highlights
-                val = self.value(cell)
-                print(f"{u1}{val}{u2}", end=end)
+                self.print_cell(cell)
                 if self.__correct_solution:
-                    correct = correct and self.check_cell(i,j,val)
+                    correct = correct and self.check_cell(i, j, self.value(cell))
 
             print()
         if self.__correct_solution and correct:
@@ -341,7 +348,7 @@ def SecretWindmill(v_pairs:list[tuple[Coords, Coords]]
     x_pairs = sort_and_offset(*x_pairs)
     nonconsecutive_pairs = sort_and_offset(*nonconsecutive_pairs)
     
-    model = SudokuModel()
+    problem = SudokuProblem()
 
     sudoku_constraint = SudokuConstraint
 
@@ -351,8 +358,8 @@ def SecretWindmill(v_pairs:list[tuple[Coords, Coords]]
     xv_pairs:list[tuple[Coords,Coords]] = v_pairs + x_pairs
     negative_v_constraints:list[NegativeVBorder] = []
     negative_x_constraints:list[NegativeXBorder] = []
-    for (cell1, cell2) in model.grid.get_all_adjacent_pairs():
-        pair:tuple[Coords,Coords] = (model.grid.index(cell1), model.grid.index(cell2))
+    for (cell1, cell2) in problem.grid.get_all_adjacent_pairs():
+        pair:tuple[Coords,Coords] = (problem.grid.index(cell1), problem.grid.index(cell2))
         if pair not in xv_pairs:
             negative_v_constraints.append(NegativeVBorder(*pair))
             negative_x_constraints.append(NegativeXBorder(*pair))
@@ -360,14 +367,12 @@ def SecretWindmill(v_pairs:list[tuple[Coords, Coords]]
     nonconsecutive_constraints:list[Nonconsecutive] = [Nonconsecutive(*pair) for pair in nonconsecutive_pairs]
 
     constraints_list:Sequence[Constraint] = [sudoku_constraint] + v_constraints + x_constraints + negative_v_constraints + negative_x_constraints + nonconsecutive_constraints
-    Constraint.apply_constraints(model, model.grid, *constraints_list)
+    Constraint.apply_constraints(problem.model, problem.grid, *constraints_list)
 
     solver = CpSolver()
     solver.parameters.enumerate_all_solutions = True
-    solver.solve(model
-                 , solution_callback=XVSolutionPrinter( model
-                                                      , v_constraints=v_constraints
-                                                      , x_constraints=x_constraints
+    solver.solve(problem.model
+                 , solution_callback=XVSolutionPrinter( problem
                                                       , correct_solution=SOLUTION
                                                       )
     )
