@@ -11,12 +11,22 @@ from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback
 
 from sudoku_py.sudoku import SudokuGrid, SudokuModel
 
+""" 
+HOUSEKEEPING
+"""
+
+############        CELL COORDINATES   ########################
+
 type Coords = tuple[int,int]
 def is_Coords(x:Any) -> TypeIs[Coords]:
     if isinstance(x, tuple):
         if len(x)==2 and isinstance(x[0],int) and isinstance(x[1],int):
             return True
     return False
+
+
+
+############        ADJACENCY   ########################
 
 AdjacentCellPair = NewType("AdjacentCellPair", tuple[Coords, Coords])
 @overload
@@ -35,7 +45,6 @@ def is_adjacent(arg0:Coords|tuple[Coords,Coords], arg1:Optional[Coords]=None) ->
         else:
             raise ValueError(arg0, arg1)
 
-
 def verify_adjacency(pair:tuple[Coords,Coords]) -> AdjacentCellPair:
     if is_adjacent(pair):
         return pair
@@ -43,10 +52,12 @@ def verify_adjacency(pair:tuple[Coords,Coords]) -> AdjacentCellPair:
         raise ValueError(pair)
 
 
+
+
+############        MANIPULATING CELL ITERABLES   ########################
+
 @overload
 def sort_cells(cell1:Coords, cell2:Coords, /) -> tuple[Coords, Coords]: ...
-    # ordered = sorted([cell1, cell2])
-    # return (ordered[0], ordered[1])
 @overload
 def sort_cells(*cells:Coords) -> tuple[Coords, ...]: ...
 def sort_cells(*cells:Coords) -> tuple[Coords, ...]:
@@ -63,6 +74,14 @@ def partition(iterable:Iterable[T], pred:Callable[[T],bool]) -> tuple[filter[T],
     return filter(pred, t1), filterfalse(pred, t2)
 
 
+
+
+
+
+############################################################
+############ ABSTRACT CONSTRAINT CLASSES ###################
+############################################################
+
 class Constraint(ABC):
     @abstractmethod
     def apply(self, model:SudokuModel, grid:SudokuGrid) -> None: ...
@@ -72,7 +91,7 @@ class Constraint(ABC):
         for constraint in constraints:
             constraint.apply(model, grid)
 
-@dataclass(init=False)
+@ft.total_ordering
 class MultiCellConstraint(Constraint):
     _cells:tuple[Coords, ...]
 
@@ -87,27 +106,42 @@ class MultiCellConstraint(Constraint):
     def cells(self, cells:Iterable[Coords]):
         self._cells = sort_cells(*cells)
 
+    def __lt__(self, other:object) -> bool: 
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cells < other.cells
+
+    def __eq__(self, other:object) -> bool:
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cells == other.cells
+
+    def __repr__(self) -> str:
+        kws = [f"{key}={value!r}" if key != "_cells" else f"cells={self.cells!r}" for key, value in self.__dict__.items()]
+        return "{}({})".format(type(self).__name__, ", ".join(kws))
+
 @dataclass
+@ft.total_ordering
 class SingleCellConstraint(Constraint):
     cell:Coords
 
-@dataclass(init=False)
+    def __lt__(self, other:object) -> bool: 
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cell < other.cell
+
+    def __eq__(self, other:object) -> bool:
+        if type(other) is not type(self):
+            raise NotImplemented
+        return self.cell == other.cell
+
+
 class TwoCellConstraint(MultiCellConstraint):
     _cells:tuple[Coords, Coords] = field(init=False, repr=False)
 
     @abstractmethod
     def __init__(self, cell1:Coords, cell2:Coords):
         self.cells = sort_cells(cell1, cell2)
-
-    def __repr__(self) -> str:
-        return f"{type(self)}(cells={self.cells})"
-
-    def __lt__(self, other:TwoCellConstraint): ...
-    def __le__(self, other): ...
-    def __eq__(self, other): ...
-    def __ne__(self, other): ...
-    def __gt__(self, other): ...
-    def __ge__(self, other): ...
 
     @property
     def cells(self) -> tuple[Coords,Coords]:
@@ -117,9 +151,7 @@ class TwoCellConstraint(MultiCellConstraint):
     def cells(self, pair:tuple[Coords,Coords]):
         self._cells = sort_cells(*pair)
 
-    
 
-@dataclass(init=False)
 class BorderConstraint(TwoCellConstraint):
     _cells:AdjacentCellPair
     def __init__(self, cell1:Coords, cell2:Coords):
@@ -141,6 +173,14 @@ class BorderConstraint(TwoCellConstraint):
         cell1, cell2 = self.cells
         dr, dc = cell2[0]-cell1[0], cell2[1]-cell1[1]
         return dr==0 and abs(dc)==1
+
+
+
+
+
+############################################################
+############ CONCRETE CONSTRAINT CLASSES ###################
+############################################################
 
 class SudokuConstraintType(Constraint):
     @staticmethod
@@ -168,7 +208,6 @@ class Given(SingleCellConstraint):
     def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
         model.add(grid.cell(*self.cell)==self.value)
 
-@dataclass(init=False)
 class Nonconsecutive(TwoCellConstraint):
     def __init__(self, cell1:Coords, cell2:Coords):
         self.cells = sort_cells(cell1, cell2)
@@ -178,14 +217,11 @@ class Nonconsecutive(TwoCellConstraint):
         model.add(cell1 - cell2 != 1)
         model.add(cell2 - cell1 != 1)
 
-
-@dataclass(init=False)
 class XBorder(BorderConstraint):
     def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 10)
 
-@dataclass(init=False)
 class VBorder(BorderConstraint):
     def apply(self, model: SudokuModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
@@ -203,9 +239,11 @@ class NegativeVBorder(BorderConstraint):
 
 
 
+############################################################
+################### EXAMPLE PROBLEM ########################
+############################################################
 
-
-class SecretWindmillSolutionPrinter(CpSolverSolutionCallback):
+class XVSolutionPrinter(CpSolverSolutionCallback):
 
     def __init__(self
                  , model:SudokuModel
@@ -223,7 +261,6 @@ class SecretWindmillSolutionPrinter(CpSolverSolutionCallback):
         self.v_borders = ([constraint.cells[0] for constraint in v_horiz], [constraint.cells[0] for constraint in v_vert])
         x_horiz, x_vert = partition(x_constraints, is_horizontal)
         self.x_borders = ([constraint.cells[0] for constraint in x_horiz], [constraint.cells[0] for constraint in x_vert])
-        
         
     @property
     def solution_count(self) -> int:
@@ -328,11 +365,12 @@ def SecretWindmill(v_pairs:list[tuple[Coords, Coords]]
     solver = CpSolver()
     solver.parameters.enumerate_all_solutions = True
     solver.solve(model
-                 , solution_callback=SecretWindmillSolutionPrinter(
-                     model
-                     , v_constraints=v_constraints
-                     , x_constraints=x_constraints
-                     , correct_solution=SOLUTION))
+                 , solution_callback=XVSolutionPrinter( model
+                                                      , v_constraints=v_constraints
+                                                      , x_constraints=x_constraints
+                                                      , correct_solution=SOLUTION
+                                                      )
+    )
 
 
 
