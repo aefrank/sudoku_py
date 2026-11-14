@@ -1,80 +1,33 @@
+########################### IMPORTS #############################
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from copy import deepcopy
 from dataclasses import dataclass, field
 import functools as ft
-from itertools import filterfalse, product, tee
+from itertools import product
 from time import time
-from typing import Any, Generic, Iterable, NewType, Optional, TypeIs, TypeVar, overload
+from typing import Any, Generic, TypeVar
 
-from ortools.sat.python.cp_model import CpModel
-from ortools.sat.python.cp_model_helper import IntVar
+from ortools.sat.python.cp_model import CpModel, IntVar
+
+from sudoku_py.common import AdjacentCellPair, Coords, is_adjacent, sort_cells, verify_adjacency
 
 
-
-############        CELL COORDINATES   ########################
+####################################################################
+########################## VARIABLE GRID ###########################
+####################################################################
 
 T = TypeVar("T")
-CellVar = IntVar
-
-type Coords = tuple[int,int]
-def is_Coords(x:Any) -> TypeIs[Coords]:
-    if isinstance(x, tuple):
-        if len(x)==2 and isinstance(x[0],int) and isinstance(x[1],int):
-            return True
-    return False
-
-
-############        CELL ADJACENCY      ########################
-AdjacentCellPair = NewType("AdjacentCellPair", tuple[Coords, Coords])
-@overload
-def is_adjacent(cell1:Coords, cell2:Coords, /) -> bool: ...
-@overload 
-def is_adjacent(cell_pair:tuple[Coords,Coords], /) -> TypeIs[AdjacentCellPair]: ...
-def is_adjacent(arg0:Coords|tuple[Coords,Coords], arg1:Optional[Coords]=None) -> bool:
-    if is_Coords(arg0):
-        if not is_Coords(arg1):
-            raise ValueError(arg1)
-        dr, dc = abs(arg0[0]-arg1[0]), abs(arg0[1]-arg1[1])
-        return dr+dc==1 
-    else:
-        if is_Coords(arg0[0]) and is_Coords(arg0[1]):
-            return is_adjacent(arg0[0], arg0[1])
-        else:
-            raise ValueError(arg0, arg1)
-
-def verify_adjacency(pair:tuple[Coords,Coords]) -> AdjacentCellPair:
-    if is_adjacent(pair):
-        return pair
-    else:
-        raise ValueError(pair)
-
-
-############        MANIPULATING CELL ITERABLES   ########################
-@overload
-def sort_cells(cell1:Coords, cell2:Coords, /) -> tuple[Coords, Coords]: ...
-@overload
-def sort_cells(*cells:Coords) -> tuple[Coords, ...]: ...
-def sort_cells(*cells:Coords) -> tuple[Coords, ...]:
-    ordered = sorted(cells)
-    if isinstance(cells,tuple):
-        return (ordered[0], ordered[1])
-    else:
-        return tuple(ordered)
-
-T = TypeVar('T')
-def partition(iterable:Iterable[T], pred:Callable[[T],bool]) -> tuple[filter[T], filterfalse[T]]:
-    """Splits an iterable into two: one matching pred, one not matching pred."""
-    t1, t2 = tee(iterable)
-    return filter(pred, t1), filterfalse(pred, t2)
-
-
-############################################################
-############## VARIABLE STORAGE: SUDOKUGRID ################
-############################################################
 
 class BaseSudokuGrid(Generic[T]):
+    """Base data structure for CP Model variable storage and handling.
+
+    Stores data in a NxN grid represented by N nested N-length lists.
+    
+    Contains data querying methods and some basic predicates such as
+    whether two cells are in the same 'sudoku box'.
+    """
     def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3)):
         self.size = size
         self.box_dims = box_dims
@@ -122,19 +75,19 @@ class BaseSudokuGrid(Generic[T]):
         return self.items
 
     def cols(self) -> list[list[T]]:
-        return [self.__col(i) for i in range(self.size)]
+        return [self.col(i) for i in range(self.size)]
 
     def boxes(self) -> list[list[list[T]]]:
-        return [self.__box(i) for i in range(self.rows_of_boxes*self.cols_of_boxes)]
+        return [self.box(i) for i in range(self.rows_of_boxes*self.cols_of_boxes)]
 
     def cells(self) -> list[T]:
-        return ft.reduce(lambda x,y: x+y, self.__rows())
+        return ft.reduce(lambda x,y: x+y, self.rows())
 
     def get_row(self, item:T) -> int:
-        return self.__index(item)[0]
+        return self.index(item)[0]
 
     def get_col(self, item:T) -> int:
-        return self.__index(item)[1]
+        return self.index(item)[1]
 
     def get_box(self, item:T) -> int:
         for i,box in enumerate(self.boxes()):
@@ -144,13 +97,13 @@ class BaseSudokuGrid(Generic[T]):
         raise ValueError(item)
 
     def same_row(self, cell1:T, cell2:T) -> bool:
-            return self.__get_row(cell1) == self.__get_row(cell2)
+            return self.get_row(cell1) == self.get_row(cell2)
     
     def same_col(self, cell1:T, cell2:T) -> bool:
-        return self.__get_col(cell1) == self.__get_col(cell2)
+        return self.get_col(cell1) == self.get_col(cell2)
 
     def same_box(self, cell1:T, cell2:T) -> bool:
-        return self.__get_box(cell1) == self.__get_box(cell2)
+        return self.get_box(cell1) == self.get_box(cell2)
 
     def __len__(self) -> int:
         return self.size
@@ -159,23 +112,17 @@ class BaseSudokuGrid(Generic[T]):
         for item in self.items:
             yield item
 
-    # avoid name-mangling
-    __row = row
-    __col = col
-    __box = box
-    __cell = cell
-    __rows = rows
-    __cols = cols
-    __boxes = boxes
-    __cells = cells
-    __index = index
-    __get_row = get_row
-    __get_col = get_col
-    __get_box = get_box
-    __populate_grid = populate_grid
 
 
 class SudokuGrid(BaseSudokuGrid[T]):
+    """Extended data structure for CP Model variable storage and handling.
+    
+        Stores data in a NxN grid represented by N nested N-length lists.
+        
+        Contains basic data querying methods and predicates, and adds
+        methods to generate derived queries such as getting all pairs
+        of adjacent cells.
+    """
 
     @classmethod
     def from_list(cls, L:list[list[T]], box_dims:tuple[int,int]=(3,3)) -> SudokuGrid[T]: 
@@ -198,14 +145,22 @@ class SudokuGrid(BaseSudokuGrid[T]):
     def is_vertical_neighbor(self, cell1:T, cell2:T) -> bool:
         return self.same_col(cell1,cell2) and (abs(self.get_row(cell1)-self.get_row(cell2))==1)
 
-############################################################
-####################### CONSTRAINTS ########################
-############################################################
 
+####################################################################
+########################### CONSTRAINTS ############################
+####################################################################
 
+################   ABSTRACT CONSTRAINT CLASSES   ###################
 
-############        ABSTRACT CONSTRAINTS   ########################
 class Constraint(ABC):
+    """Defines abstract skeleton for Sudoku constraints.
+
+    In particular defines the ```apply``` method signature,
+    which should be implemented by all concrete subclasses.
+
+    Also supplies static method to apply multiple constraints
+    to the same model and variables.
+    """
     @abstractmethod
     def apply(self, model:CpModel, grid:SudokuGrid) -> None: ...
 
@@ -216,6 +171,12 @@ class Constraint(ABC):
 
 @ft.total_ordering
 class MultiCellConstraint(Constraint):
+    """Defines abstract interface for Sudoku constraints that relate
+    multiple cells.
+
+    Enforces a canonical (sorted) order for storing collections of cells
+    so they can be easily checked without worrying about permutations.
+    """
     _cells:tuple[Coords, ...]
 
     def __init__(self, *cells:Coords):
@@ -242,6 +203,9 @@ class MultiCellConstraint(Constraint):
 @dataclass
 @ft.total_ordering
 class SingleCellConstraint(Constraint):
+    """Defines abstract interface for Sudoku constraints that act 
+    on a single cell.
+    """
     cell:Coords
 
     def __lt__(self, other:object) -> bool: 
@@ -256,9 +220,14 @@ class SingleCellConstraint(Constraint):
 
 
 class TwoCellConstraint(MultiCellConstraint):
+    """Defines abstract interface for Sudoku constraints that relate
+    exactly two cells.
+
+    Enables the assumption that len(TwoCellConstraint.cells)==2,
+    which is useful for type checking and adjacency requirements.
+    """
     _cells:tuple[Coords, Coords] = field(init=False, repr=False)
 
-    @abstractmethod
     def __init__(self, cell1:Coords, cell2:Coords):
         self.cells = sort_cells(cell1, cell2)
 
@@ -272,7 +241,15 @@ class TwoCellConstraint(MultiCellConstraint):
 
 
 class BorderConstraint(TwoCellConstraint):
+    """Defines abstract interface for Sudoku constraints located
+    on the border between two adjacent cells.
+
+    Enforces that the two cells in self._cells are adjacent, and
+    allows querying of whether the border separates the cells
+    horizontally or vertically.
+    """
     _cells:AdjacentCellPair
+    
     def __init__(self, cell1:Coords, cell2:Coords):
         assert is_adjacent(cell1, cell2)
         cells = sort_cells(cell1, cell2)
@@ -299,6 +276,12 @@ class BorderConstraint(TwoCellConstraint):
 ############################################################
 
 class SudokuConstraintType(Constraint):
+    """Implements the standard 'Sudoku' non-repeating constraints.
+
+    Enforces AllDifferent CpModel constraint on grid rows, columns, and boxes.
+
+    Singleton class with no internal data.
+    """
     @staticmethod
     def apply(model: CpModel, grid: SudokuGrid) -> None:
         for row in grid.rows():
@@ -317,14 +300,19 @@ class SudokuConstraintType(Constraint):
 
 SudokuConstraint = SudokuConstraintType()
 
+
 @dataclass
 class Given(SingleCellConstraint):
+    """Represents a given cell value known to be true.
+    """
     value: int
 
     def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         model.add(grid.cell(*self.cell)==self.value)
 
 class Nonconsecutive(TwoCellConstraint):
+    """Enforces that the values of two cells are nonconsecutive.
+    """
     def __init__(self, cell1:Coords, cell2:Coords):
         self.cells = sort_cells(cell1, cell2)
 
@@ -334,21 +322,29 @@ class Nonconsecutive(TwoCellConstraint):
         model.add(cell2 - cell1 != 1)
 
 class XBorder(BorderConstraint):
+    """Enforces that the sum of two *adjacent* cells is 10.
+    """
     def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 10)
 
 class VBorder(BorderConstraint):
+    """Enforces that the sum of two *adjacent* cells is 5.
+    """
     def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 5)
 
-class NegativeXBorder(BorderConstraint):
+class NegativeXBorder(TwoCellConstraint):
+    """Enforces that the sum of two cells *IS NOT* 10.
+    """
     def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 10)
 
-class NegativeVBorder(BorderConstraint):
+class NegativeVBorder(TwoCellConstraint):
+    """Enforces that the sum of two cells *IS NOT* 5.
+    """
     def apply(self, model: CpModel, grid: SudokuGrid) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 5)
@@ -361,6 +357,9 @@ class NegativeVBorder(BorderConstraint):
 ############################################################
 
 class SudokuProblem:
+    """Main class coordinating model, data, and constraint objects for
+    a given Sudoku problem.
+    """
     model: CpModel
     grid: SudokuGrid
     _constraints:list[Constraint]
@@ -370,7 +369,7 @@ class SudokuProblem:
         self.grid = self.create_grid(size, box_dims, one_indexed_cell_names)
         self._constraints = [SudokuConstraint]
 
-    def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGrid[CellVar]:
+    def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGrid[IntVar]:
         os = 1 if one_indexed_cell_names else 0
         grid = [[self.model.new_int_var(1, size, f"Cell[{r+os},{c+os}]") 
                 for c in range(size)] 

@@ -26,7 +26,8 @@ from sudoku_py.sudoku import SudokuProblem
 
 
 class XVSolutionPrinter(CpSolverSolutionCallback):
-
+    """Prints solution as NxN grid marked with X and V constraints. 
+    """
     def __init__(self
                  , problem: SudokuProblem
                 #  , v_constraints:list[VBorder]=[]
@@ -44,6 +45,8 @@ class XVSolutionPrinter(CpSolverSolutionCallback):
 
 
     def get_xv(self, *constraints:Constraint) -> tuple[tuple[set[XBorder], set[XBorder]], tuple[set[VBorder], set[VBorder]]]:
+        """Extracts XBorder and VBorder from list of Constraints, and organizes each into horizontal and vertical borders.
+        """
         x_constraints:tuple[set[XBorder], set[XBorder]] = (set(), set())
         v_constraints:tuple[set[VBorder], set[VBorder]] = (set(), set())
         for constraint in constraints:
@@ -65,10 +68,15 @@ class XVSolutionPrinter(CpSolverSolutionCallback):
         return self._solution_count
 
     def check_cell(self, i, j, val) -> bool:
+        """Checks cell's value against correct solution.
+        """
         assert self.__correct_solution is not None
         return self.__correct_solution[i][j] == val
 
     def print_cell(self, cell:Coords):
+        """Prints cell value with XV annotation to terminal in current 
+        location.
+        """
         # HORIZONTAL ANNOTATIONS
         if cell in self.v_borders[0]:
             end = " v "
@@ -90,6 +98,8 @@ class XVSolutionPrinter(CpSolverSolutionCallback):
 
     
     def on_solution_callback(self):
+        """Prints grid and stats to terminal for each found solution.
+        """
         current_time = time()
         print(
             f"Solution {self._solution_count}, "
