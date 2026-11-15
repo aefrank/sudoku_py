@@ -2,6 +2,11 @@
 from collections.abc import Callable, Iterable
 from itertools import filterfalse, tee
 from typing import Any, NewType, Optional, TypeIs, TypeVar, overload
+import functools as ft
+
+T = TypeVar('T')
+
+
 
 ############        CELL COORDINATES   ########################
 
@@ -60,7 +65,6 @@ def sort_cells(*cells:Coords) -> tuple[Coords, ...]:
     else:
         return tuple(ordered)
 
-T = TypeVar('T')
 def partition(iterable:Iterable[T], pred:Callable[[T],bool]) -> tuple[filter[T], filterfalse[T]]:
     """Splits an iterable into two: one matching pred, one not matching pred.
     """

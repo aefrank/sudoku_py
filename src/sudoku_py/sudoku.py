@@ -1,13 +1,14 @@
 ########################### IMPORTS #############################
 
 from abc import ABC, abstractmethod
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
 import functools as ft
-from itertools import product
+import itertools as it
 from time import time
-from typing import Any, Generic, TypeVar
+from types import NotImplementedType
+from typing import Any, Generic, TypeGuard, TypeIs, TypeVar, cast, overload
 
 from ortools.sat.python.cp_model import CpModel, IntVar
 
@@ -131,10 +132,10 @@ class SudokuGrid(BaseSudokuGrid[T]):
         return sudoku_grid
 
     def get_all_horizontal_pairs(self) -> list[tuple[T,T]]:
-        return [(self.cell(r,c), self.cell(r,c+1)) for r,c in product(range(self.size), range(self.size-1))]
+        return [(self.cell(r,c), self.cell(r,c+1)) for r,c in it.product(range(self.size), range(self.size-1))]
     
     def get_all_vertical_pairs(self) -> list[tuple[T,T]]:
-        return [(self.cell(r,c), self.cell(r+1,c)) for r,c in product(range(self.size-1), range(self.size))]
+        return [(self.cell(r,c), self.cell(r+1,c)) for r,c in it.product(range(self.size-1), range(self.size))]
     
     def get_all_adjacent_pairs(self) -> list[tuple[T,T]]:
         return self.get_all_horizontal_pairs() + self.get_all_vertical_pairs()
@@ -169,6 +170,33 @@ class Constraint(ABC):
         for constraint in constraints:
             constraint.apply(model, grid)
 
+    @staticmethod
+    def handle_mismatched_compare(response_on_mismatch:bool|Exception|NotImplementedType):        
+        def decorator[T](func:Callable[[T,T],bool]):
+            def type_match(x:object) -> TypeGuard[T]:
+                return type(x) is T
+
+            @ft.wraps(func)
+            def wrapper(self:T, other:object) -> bool:
+                if type_match(other):
+                    return func(self, other)
+                if isinstance(response_on_mismatch, Exception):
+                    raise response_on_mismatch
+                return response_on_mismatch
+            return wrapper
+        return decorator
+
+    @handle_mismatched_compare(False)
+    def __eq__(self, other:Constraint) -> bool:
+        return other is self
+
+    @handle_mismatched_compare(NotImplemented)
+    def __lt__(self, other:Constraint):
+        return NotImplemented
+
+    
+        
+
 @ft.total_ordering
 class MultiCellConstraint(Constraint):
     """Defines abstract interface for Sudoku constraints that relate
@@ -186,15 +214,13 @@ class MultiCellConstraint(Constraint):
     def cells(self) -> tuple[Coords, ...]:
         return self._cells
 
-    def __lt__(self, other:object) -> bool: 
-        if type(other) is not type(self):
-            raise NotImplemented
-        return self.cells < other.cells
-
-    def __eq__(self, other:object) -> bool:
-        if type(other) is not type(self):
-            raise NotImplemented
-        return self.cells == other.cells
+    @Constraint.handle_mismatched_compare(False)
+    def __eq__(self, other: MultiCellConstraint) -> bool:
+        return (self.cells==other.cells) 
+            
+    @Constraint.handle_mismatched_compare(NotImplemented)
+    def __lt__(self, other: MultiCellConstraint) -> bool: 
+        return self.cells < other.cells 
 
     def __repr__(self) -> str:
         kws = [f"{key}={value!r}" if key != "_cells" else f"cells={self.cells!r}" for key, value in self.__dict__.items()]
@@ -213,10 +239,11 @@ class SingleCellConstraint(Constraint):
             raise NotImplemented
         return self.cell < other.cell
 
-    def __eq__(self, other:object) -> bool:
-        if type(other) is not type(self):
-            raise NotImplemented
-        return self.cell == other.cell
+    def _same_type__eq__(self: T, other: T) -> bool:
+        return (self.cell==other.cell) # pyright: ignore[reportAttributeAccessIssue]
+    
+    def _same_type__lt__(self: T, other: T) -> bool:
+            return (self.cell==other.cell) # pyright: ignore[reportAttributeAccessIssue]
 
 
 class TwoCellConstraint(MultiCellConstraint):
@@ -229,7 +256,7 @@ class TwoCellConstraint(MultiCellConstraint):
     _cells:tuple[Coords, Coords] = field(init=False, repr=False)
 
     def __init__(self, cell1:Coords, cell2:Coords):
-        self.cells = sort_cells(cell1, cell2)
+        self.cells = (cell1, cell2)
 
     @property
     def cells(self) -> tuple[Coords,Coords]:
@@ -249,12 +276,7 @@ class BorderConstraint(TwoCellConstraint):
     horizontally or vertically.
     """
     _cells:AdjacentCellPair
-    
-    def __init__(self, cell1:Coords, cell2:Coords):
-        assert is_adjacent(cell1, cell2)
-        cells = sort_cells(cell1, cell2)
-        if is_adjacent(cells):
-            self.cells = cells
+
 
     @property
     def cells(self) -> AdjacentCellPair:
@@ -283,7 +305,7 @@ class SudokuConstraintType(Constraint):
     Singleton class with no internal data.
     """
     @staticmethod
-    def apply(model: CpModel, grid: SudokuGrid) -> None:
+    def apply(model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         for row in grid.rows():
             model.add_all_different(row)
         for col in grid.cols():
@@ -307,16 +329,28 @@ class Given(SingleCellConstraint):
     """
     value: int
 
-    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         model.add(grid.cell(*self.cell)==self.value)
+
+class Consecutive(TwoCellConstraint):
+    """Enforces that the values of two cells are consecutive.
+    """
+
+    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
+        cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
+        # need new variable to represent difference of cells
+        max_diff = max(
+            abs(cell1.domain.max()-cell2.domain.min()), 
+            abs(cell2.domain.max()-cell1.domain.min())
+        )
+        # diff:IntVar = model.new_int_var(-max_diff, max_diff, name=f"{cell2.name}-{cell1.name}")
+        # model.add(cell2 - cell1 == diff)
+        model.add_abs_equality(1, cell2-cell1)
 
 class Nonconsecutive(TwoCellConstraint):
     """Enforces that the values of two cells are nonconsecutive.
     """
-    def __init__(self, cell1:Coords, cell2:Coords):
-        self.cells = sort_cells(cell1, cell2)
-
-    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 - cell2 != 1)
         model.add(cell2 - cell1 != 1)
@@ -324,28 +358,28 @@ class Nonconsecutive(TwoCellConstraint):
 class XBorder(BorderConstraint):
     """Enforces that the sum of two *adjacent* cells is 10.
     """
-    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 10)
 
 class VBorder(BorderConstraint):
     """Enforces that the sum of two *adjacent* cells is 5.
     """
-    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 5)
 
 class NegativeXBorder(TwoCellConstraint):
     """Enforces that the sum of two cells *IS NOT* 10.
     """
-    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 10)
 
 class NegativeVBorder(TwoCellConstraint):
     """Enforces that the sum of two cells *IS NOT* 5.
     """
-    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 5)
 
@@ -362,12 +396,20 @@ class SudokuProblem:
     """
     model: CpModel
     grid: SudokuGrid
-    _constraints:list[Constraint]
+    _constraints:list[Constraint] # TODO: refactor to set
 
-    def __init__(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True):
+    def __init__(self
+                 , size:int=9
+                 , box_dims:tuple[int,int]=(3,3)
+                 , constraints:list[Constraint]=[]
+                 , one_indexed_cell_names:bool=True
+                ):
         self.model = CpModel()
         self.grid = self.create_grid(size, box_dims, one_indexed_cell_names)
-        self._constraints = [SudokuConstraint]
+        if not SudokuConstraint in constraints:
+            self._constraints = [SudokuConstraint] + [c for c in constraints]
+        else:
+            self._constraints = [c for c in constraints]
 
     def create_grid(self, size:int=9, box_dims:tuple[int,int]=(3,3), one_indexed_cell_names:bool=True) -> SudokuGrid[IntVar]:
         os = 1 if one_indexed_cell_names else 0
