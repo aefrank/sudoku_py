@@ -75,8 +75,6 @@ class MySolutionPrinter(CpSolverSolutionCallback):
             print("SOLUTION CORRECT!")
         print()
 
-
-    
     def on_solution_callback(self):
         """Prints grid and stats to terminal for each found solution.
         """

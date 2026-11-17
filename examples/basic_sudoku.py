@@ -1,4 +1,3 @@
-import functools as ft
 from time import time
 
 from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback
