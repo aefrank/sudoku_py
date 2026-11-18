@@ -110,10 +110,16 @@ class GermanWhisperLine(WhisperLine):
     def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         # single boolean switch handles if line goes low-high-low-high or high-low-high-low
         start_high:IntVar = model.new_bool_var(name=f"{self.name}: {grid.cell(*self.cells[0]).name} is high-valued")
-        for c1, c2 in self.pairwise:
+        high = True
+        for c1,c2 in self.pairwise:
             cell1, cell2 = grid.cell(*c1), grid.cell(*c2)
-            model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(start_high)
-            model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(~start_high)
+            if high:
+                model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(start_high)
+                model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(~start_high)
+            else:
+                model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(~start_high)
+                model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(start_high)
+            high = not high
 
     
 
@@ -255,7 +261,7 @@ def pickleball():
     constraint_list:list[Constraint] = concatenate_constraint_lists((
           [BlackKropki(*remove_offset(cells, 1)) for cells in black_kropki_pairs]
         , [WhiteKropki(*remove_offset(cells, 1)) for cells in white_kropki_pairs]
-        # , [GermanWhisperLine(remove_offset(cells, 1)) for cells in german_whispers_lines]
+        , [GermanWhisperLine(remove_offset(cells, 1)) for cells in german_whispers_lines]
         ))
 
     problem = MyProblemSetup(
