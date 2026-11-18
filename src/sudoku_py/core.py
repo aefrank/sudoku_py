@@ -4,6 +4,8 @@ from itertools import filterfalse, tee
 from typing import Any, NewType, Optional, TypeIs, TypeVar, overload
 import functools as ft
 
+from more_itertools import peekable
+
 T = TypeVar('T')
 
 
@@ -70,3 +72,18 @@ def partition(iterable:Iterable[T], pred:Callable[[T],bool]) -> tuple[filter[T],
     """
     t1, t2 = tee(iterable)
     return filter(pred, t1), filterfalse(pred, t2)
+
+
+def partition_out_type[T](values:Iterable, target_type:type[T]) -> tuple[list[T], list[Any]]:
+    yes, no = partition(values, lambda x: isinstance(x, target_type))
+    return list(yes), list(no)
+
+
+
+def partition_out_types[T](values:Iterable, target_type:type[T], *tail:type):
+    yes, no = partition_out_type(values, target_type)
+    peekable_no, peekable_tail = peekable(no), peekable(tail)
+    if not peekable_no or not peekable_tail:
+        return [yes]
+    else:
+         return [yes] + partition_out_types(no, *tail)

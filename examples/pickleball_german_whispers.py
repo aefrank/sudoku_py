@@ -11,11 +11,12 @@ import functools as ft
 import itertools as it
 from typing import Any
 
+from more_itertools import peekable
 from ortools.sat.python.cp_model import CpModel, CpSolver, IntVar
 
 from my_utils import MyProblemSetup, MySolutionPrinter, concatenate_constraint_lists, remove_offset
 from sudoku_py.constraint import BlackKropki, BorderConstraint, Constraint, MultiCellConstraint, TwoCellConstraint, WhiteKropki
-from sudoku_py.core import Coords, partition
+from sudoku_py.core import Coords, partition, partition_out_types
 from sudoku_py.grid import SudokuGrid
 from sudoku_py.problem import SudokuProblem
 
@@ -133,6 +134,17 @@ class GermanWhisperGraph(MultiCellConstraint): # TODO
 
 class PickleballSolutionPrinter(MySolutionPrinter):
 
+    # @staticmethod
+    # def verify_type[T](pair:tuple[Coords,Coords], T:type) -> AdjacentCellPair:
+    # """"Casts pair of adjacent cell coordinates to type AdjacentCellPair, or
+    # raises TypeError if they are not adjacent."""
+    # if is_adjacent(pair):
+    #     return pair
+    # else:
+    #     raise TypeError(pair)
+
+    
+
     @staticmethod
     def partition_horizontal_vertical(border_constraints:Iterable[BorderConstraint]):
         horizontal, vertical = partition(border_constraints, lambda x: x.is_horizontal) # pyright: ignore[reportAttributeAccessIssue]
@@ -141,32 +153,44 @@ class PickleballSolutionPrinter(MySolutionPrinter):
             , set(sorted(cons.cells)[0] for cons in vertical)
             )
 
+    @staticmethod
+    def extract_disjoint_constraint_types(constraints:Iterable[Constraint], constraint_types:Iterable[type[Constraint]]) -> list[list[Constraint]]:
+        head, *tail = constraint_types
+        yes, no = partition(constraints, lambda x: isinstance(x, head))
+        yes = list(yes)
+        no, tail = peekable(no), peekable(tail)
+        if not no or not tail:
+            return [list(yes)]
+        else:
+            return [list(yes)] + PickleballSolutionPrinter.extract_disjoint_constraint_types(no, tail)
+
+
 
     def __init__(self, problem: SudokuProblem, correct_solution: list[list[int]] | None = None):
-        white_kropki, not_white_kropki = partition(problem.constraints, lambda x: isinstance(x, WhiteKropki))
-        black_kropki, _ = partition(not_white_kropki, lambda x: isinstance(x, BlackKropki))
-        self._white_kropki_print_targets: tuple[set[Coords], set[Coords]] = self.partition_horizontal_vertical(white_kropki) # pyright: ignore[reportArgumentType]
-        self._black_kropki_print_targets: tuple[set[Coords], set[Coords]] = self.partition_horizontal_vertical(black_kropki) # pyright: ignore[reportArgumentType]
+        (white_kropki, black_kropki) = partition_out_types(problem.constraints, WhiteKropki, BlackKropki)
+        self._white_kropki_print_targets: tuple[set[Coords], set[Coords]] = self.partition_horizontal_vertical(white_kropki) 
+        self._black_kropki_print_targets: tuple[set[Coords], set[Coords]] = self.partition_horizontal_vertical(black_kropki)  
         super().__init__(problem, correct_solution)
 
-    def print_target(self, cell:Coords, *, invert_kropki_colors=False):
+    def print_target(self, cell:Coords, *, invert_kropki_markings=False):
         """Prints cell value with Kropki annotation to terminal in current 
         location.
         """
         filled_circle = "\u25CF"
         empty_circle = "\u25CB"
+        kropki_targets = (self._black_kropki_print_targets, self._white_kropki_print_targets) if invert_kropki_markings else (self._white_kropki_print_targets, self._black_kropki_print_targets)
         # HORIZONTAL ANNOTATIONS
-        if cell in self._white_kropki_print_targets[0]:
+        if cell in kropki_targets[0][0]:
             end =  f" {empty_circle} "
-        elif cell in self._black_kropki_print_targets[0]:
+        elif cell in kropki_targets[1][0]:
             end =  f" {filled_circle} "
         else:
             end = "   "
         # VERTICAL ANNOTATIONS:
         # Add single underline (white) or double underline (black) between applicable vertical pairs
-        if cell in self._white_kropki_print_targets[1]:
+        if cell in kropki_targets[0][1]:
             u1,u2 = "\033[4m", "\033[0m"
-        elif cell in self._black_kropki_print_targets[1]:
+        elif cell in kropki_targets[1][1]:
             u1,u2 = "\033[21m", "\033[24m"
         else:
             u1,u2 = "",""
