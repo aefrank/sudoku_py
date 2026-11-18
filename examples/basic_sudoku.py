@@ -3,7 +3,8 @@ from time import time
 from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback
 from ortools.sat.python.cp_model_helper import IntVar, CpSolverStatus
 
-from sudoku_py.sudoku import Given, Coords, SudokuProblem
+from sudoku_py.constraint import Given, Coords
+from sudoku_py.problem import SudokuProblem
 
 
 class SudokuSolutionPrinter(CpSolverSolutionCallback):
