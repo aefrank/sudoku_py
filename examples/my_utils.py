@@ -1,27 +1,12 @@
-
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
-import itertools as it
-import functools as ft
 from time import time
 from typing import Optional, overload
+import functools as ft
+import itertools as it
 
-from ortools.sat.python.cp_model import CpModel, CpSolver, CpSolverSolutionCallback, CpSolverStatus, IntVar
+from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback, CpSolverStatus, IntVar
 
-from sudoku_py.common import AdjacentCellPair, Coords, sort_cells, verify_adjacency
-from sudoku_py.sudoku import BorderConstraint, Consecutive, Constraint, SudokuGrid, SudokuProblem, VBorder, XBorder
-
-class WhiteKropki(BorderConstraint, Consecutive):
-    pass
-
-class BlackKropki(BorderConstraint):
-    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
-        cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
-        # boolean switch handles "(cell1 == 2*cell2) OR (cell2 == 2*cell1)"
-        cell2_is_twice_cell1:IntVar = model.new_bool_var(name=f"{cell2.name}==2 * `{cell1.name}`")
-        model.add(cell2 == 2 * cell1).only_enforce_if(cell2_is_twice_cell1)
-        model.add(cell1 == 2 * cell2).only_enforce_if(~cell2_is_twice_cell1)
-
+from sudoku_py.common import Coords, sort_cells
+from sudoku_py.sudoku import SudokuProblem
 
 
 class MySolutionPrinter(CpSolverSolutionCallback):
@@ -148,78 +133,3 @@ class MyProblemSetup(SudokuProblem):
         if not self.constraints_applied:
             super().apply_constraints()
 
-
-
-def square_dotted_ring():
-    '''
-    https://sudokupad.app/jnyo2wg0iq
-    '''
-    SOLUTION = [
-          [7,8,4,3,9,1,2,6,5]
-        , [6,5,1,2,8,7,9,3,4]
-        , [9,2,3,6,5,4,1,7,8]
-        , [5,9,6,1,2,3,4,8,7]
-        , [4,1,7,9,6,8,5,2,3]
-        , [2,3,8,7,4,5,6,9,1]
-        , [1,4,2,8,7,6,3,5,9]
-        , [3,7,9,5,1,2,8,4,6]
-        , [8,6,5,4,3,9,7,1,2]
-    ]
-
-    constraint_data:dict[type, list[tuple[Coords, Coords]]] = {
-        WhiteKropki : [ 
-              ((1,1), (1,2))
-            , ((1,6), (1,7))
-            , ((1,9), (2,9))
-            , ((2,1), (2,2))
-            , ((3,4), (3,5))
-            , ((3,5), (3,6))
-            , ((3,8), (4,8))
-            , ((3,9), (4,9))
-            , ((4,1), (5,1))
-            , ((4,3), (5,3))
-            , ((5,3), (6,3))
-            , ((4,7), (5,7))
-            , ((5,7), (6,7))
-            , ((6,1), (7,1))
-            , ((6,2), (7,2))
-            , ((7,4), (7,5))
-            , ((7,5), (7,6))
-            , ((8,2), (9,2))
-            , ((8,4), (9,4))
-            ]
-        , BlackKropki : [  
-              ((3,3), (3,4))
-            , ((3,3), (4,3))
-            , ((7,6), (7,7))
-            , ((6,7), (7,7))
-            , ((9,8), (9,9))
-            ]
-        , XBorder : [  
-              ((4,4), (5,4))
-            , ((4,9), (5,9))
-            , ((6,3), (7,3))
-            , ((7,3), (7,4))
-            , ((8,8), (8,9))
-            ]
-        , VBorder : [  
-              ((3,6), (3,7))
-            , ((3,7), (4,7))
-            , ((5,1), (5,2))
-        ]
-    }
-
-
-    problem = MyProblemSetup(
-          one_indexed=True
-        , constraint_data=constraint_data
-        , correct_solution=SOLUTION
-    )
-
-    problem.solve(CpSolver())
-
-if __name__=="__main__":
-    square_dotted_ring()
-
-
-    
