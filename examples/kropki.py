@@ -2,7 +2,7 @@
 from ortools.sat.python.cp_model import CpSolver
 
 from my_utils import MyProblemSetup
-from sudoku_py.common import Coords
+from sudoku_py.core import Coords
 from sudoku_py.constraint import VBorder, XBorder, WhiteKropki, BlackKropki
 
 

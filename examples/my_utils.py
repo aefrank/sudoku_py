@@ -5,8 +5,8 @@ import itertools as it
 
 from ortools.sat.python.cp_model import CpSolver, CpSolverSolutionCallback, CpSolverStatus, IntVar
 
-from sudoku_py.common import Coords, sort_cells
-from sudoku_py.sudoku import SudokuProblem
+from sudoku_py.core import Coords, sort_cells
+from sudoku_py.problem import SudokuProblem
 
 
 class MySolutionPrinter(CpSolverSolutionCallback):

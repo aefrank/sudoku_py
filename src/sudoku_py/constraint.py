@@ -7,7 +7,7 @@ from typing import TypeGuard, TypeVar
 import functools as ft
 from ortools.sat.python.cp_model import CpModel, IntVar
 
-from sudoku_py.common import AdjacentCellPair, Coords, sort_cells, verify_adjacency
+from sudoku_py.core import AdjacentCellPair, Coords, sort_cells, verify_adjacency
 from sudoku_py.grid import SudokuGrid
 
 T = TypeVar("T")
