@@ -36,12 +36,12 @@ class Constraint(ABC):
     @staticmethod
     def handle_mismatched_compare(response_on_mismatch:bool|Exception|NotImplementedType):        
         def decorator[T](func:Callable[[T,T],bool]):
-            def type_match(x:object) -> TypeGuard[T]:
-                return type(x) is T
+            def type_match(x:object, self:T) -> TypeGuard[T]:
+                return type(x) is type(self)
 
             @ft.wraps(func)
             def wrapper(self:T, other:object) -> bool:
-                if type_match(other):
+                if type_match(other, self):
                     return func(self, other)
                 if isinstance(response_on_mismatch, Exception):
                     raise response_on_mismatch
@@ -69,11 +69,11 @@ class MultiCellConstraint(Constraint):
     _cells:tuple[Coords, ...]
 
     def __init__(self, *cells:Coords):
-        self._cells = sort_cells(*cells)
+        self._cells = cells
 
     @property
     def cells(self) -> tuple[Coords, ...]:
-        return self._cells
+        return sort_cells(*self._cells)
 
     @Constraint.handle_mismatched_compare(False)
     def __eq__(self, other: MultiCellConstraint) -> bool:
@@ -205,8 +205,6 @@ class Consecutive(TwoCellConstraint):
             abs(cell1.domain.max()-cell2.domain.min()), 
             abs(cell2.domain.max()-cell1.domain.min())
         )
-        # diff:IntVar = model.new_int_var(-max_diff, max_diff, name=f"{cell2.name}-{cell1.name}")
-        # model.add(cell2 - cell1 == diff)
         model.add_abs_equality(1, cell2-cell1)
 
 class Nonconsecutive(TwoCellConstraint):
@@ -256,6 +254,6 @@ class BlackKropki(BorderConstraint):
     def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         # boolean switch handles "(cell1 == 2*cell2) OR (cell2 == 2*cell1)"
-        cell2_is_twice_cell1:IntVar = model.new_bool_var(name=f"{cell2.name}==2 * `{cell1.name}`")
+        cell2_is_twice_cell1:IntVar = model.new_bool_var(name=f"{cell2.name}==2 * {cell1.name}")
         model.add(cell2 == 2 * cell1).only_enforce_if(cell2_is_twice_cell1)
         model.add(cell1 == 2 * cell2).only_enforce_if(~cell2_is_twice_cell1)
