@@ -1,7 +1,7 @@
 
 from collections.abc import Callable, Iterable
 from itertools import filterfalse, tee
-from typing import Any, NewType, Optional, TypeIs, TypeVar, overload
+from typing import Any, NewType, Optional, TypeIs, TypeVar, Union, overload
 import functools as ft
 
 from more_itertools import peekable
@@ -74,16 +74,19 @@ def partition(iterable:Iterable[T], pred:Callable[[T],bool]) -> tuple[filter[T],
     return filter(pred, t1), filterfalse(pred, t2)
 
 
-def partition_out_type[T](values:Iterable, target_type:type[T]) -> tuple[list[T], list[Any]]:
-    yes, no = partition(values, lambda x: isinstance(x, target_type))
-    return list(yes), list(no)
+def partition_out_type[T](values:Iterable[Any], target_type:type[T]) -> tuple[filter[T], filterfalse[Any]]:
+    return partition(values, lambda x: isinstance(x, target_type))
 
-
-
-def partition_out_types[T](values:Iterable, target_type:type[T], *tail:type):
+def partition_out_types[T](values:Iterable[Any], target_type:type[T], *more_target_types:type) -> list[filter[T]|Any]:
+    # Declare some types for type checking
+    yes:filter[T]
+    no:filterfalse[Any]
+    peekable_no:peekable[Any]
+    peekable_mtt:peekable[type]
+    # main:
     yes, no = partition_out_type(values, target_type)
-    peekable_no, peekable_tail = peekable(no), peekable(tail)
-    if not peekable_no or not peekable_tail:
+    peekable_no, peekable_mtt = peekable(no), peekable(more_target_types)
+    if not peekable_no or not peekable_mtt:
         return [yes]
     else:
-         return [yes] + partition_out_types(no, *tail)
+         return [yes] + partition_out_types(no, *more_target_types)

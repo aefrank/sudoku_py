@@ -5,177 +5,18 @@ Rules: Kropki and German Whispers
 """
 
 
-from collections.abc import Iterable
-from dataclasses import dataclass, field
-import functools as ft
-import itertools as it
-from typing import Any
-
-from more_itertools import peekable
-from ortools.sat.python.cp_model import CpModel, CpSolver, IntVar
-
-from my_utils import MyProblemSetup, MySolutionPrinter, concatenate_constraint_lists, remove_offset
-from sudoku_py.constraint import BlackKropki, BorderConstraint, Constraint, MultiCellConstraint, TwoCellConstraint, WhiteKropki
+from my_utils import MyProblemSetup, MySolutionPrinter, concatenate_constraint_lists, partition_horizontal_vertical, remove_offset
+from sudoku_py.constraint import BlackKropki, Constraint, GermanWhisperLine, WhiteKropki
 from sudoku_py.core import Coords, partition, partition_out_types
-from sudoku_py.grid import SudokuGrid
 from sudoku_py.problem import SudokuProblem
-
-# @ft.total_ordering
-# @dataclass
-# class GermanWhisperPair(TwoCellConstraint):
-#     minimum_difference:int=5
-
-#     def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
-#         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
-#         # boolean switch handles "(cell1 == 2*cell2) OR (cell2 == 2*cell1)"
-#         cell1_gt_cell2:IntVar = model.new_bool_var(name=f"{cell1.name} > {cell2.name}")
-#         model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(cell1_gt_cell2)
-#         model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(~cell1_gt_cell2)
-
-#     @Constraint.handle_mismatched_compare(False)
-#     def __eq__(self, other: GermanWhisperPair) -> bool:
-#         return super().__eq__(self, other) and self.minimum_difference==other.minimum_difference
-
-#     @Constraint.handle_mismatched_compare(False)
-#     def __lt__(self, other: GermanWhisperPair) -> bool:
-#         # use minimum_difference as a tie-breaker
-#         out = super().__lt__(self, other)
-#         if not out: # could be ==
-#             return self.minimum_difference < other.minimum_difference
-#         return out
-
-@ft.total_ordering
-@dataclass
-class WhisperLine(MultiCellConstraint):
-    """Defines a sequence of cells where consecutive cells must differ by at least some minimum difference.
-
-    Most common variants are German Whispers (minimum difference=5) and Dutch Whispers (minimum difference=4).
-    """
-    minimum_difference:int
-
-    def __init__(self, cells:tuple[Coords,...], minimum_difference:int=5):
-        self._cells = cells # DO NOT SORT
-        self.minimum_difference = minimum_difference
-
-    @property
-    def cells(self) -> tuple[Coords,...]:
-        return self._cells # DO NOT SORT
-
-    @property
-    def pairwise(self) -> Iterable[tuple[Coords, Coords]]:
-        return it.pairwise(self.cells)
-
-    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
-        for c1, c2 in self.pairwise:
-            cell1, cell2 = grid.cell(*c1), grid.cell(*c2)
-            # boolean switch handles enforcing the magnitude of the difference is at least minimum_difference 
-            cell1_gt_cell2:IntVar = model.new_bool_var(name=f"{cell1.name} > {cell2.name}")
-            model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(cell1_gt_cell2)
-            model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(~cell1_gt_cell2)
-
-    @Constraint.handle_mismatched_compare(False)
-    def __eq__(self, other: WhisperLine) -> bool:
-        return super().__eq__(self, other) and self.minimum_difference==other.minimum_difference
-
-    @Constraint.handle_mismatched_compare(False)
-    def __lt__(self, other: WhisperLine) -> bool:
-        out = super().__lt__(self, other)
-        # use minimum_difference as a tie-breaker if needed
-        if not out:
-            return self.minimum_difference < other.minimum_difference
-        return out
-
-
-@ft.total_ordering
-@dataclass(init=False)
-class GermanWhisperLine(WhisperLine):
-    """Defines a sequence of cells where consecutive cells are connected by a German Whisper constraint.
-
-    ASssumes minimum difference is defined to partition cells along line into alternating high and low digits.
-    For example, for a traditional 9x9 sudoku where cells have values 1-9, minimum_difference=5. This makes
-    consecutive cells on a German Whisper line alternate between values in {1,2,3,4} and those in {6,7,8,9}.
-
-    If this assumption does not hold, use the parent class `WhisperLine` instead.
-    """
-    minimum_difference:int=5
-    name:str
-    __INSTANCE_COUNT:int=field(default=0, repr=False, compare=False, hash=False)
-
-
-    def __init__(self, cells: Iterable[Coords], minimum_difference: int = 5):
-        super().__init__(tuple(cells), minimum_difference)
-        __class__.__INSTANCE_COUNT += 1 # increment program-wide instance count
-        self.name = f"{__class__.__name__}{self.__INSTANCE_COUNT}"
-
-    def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
-        # single boolean switch handles if line goes low-high-low-high or high-low-high-low
-        start_high:IntVar = model.new_bool_var(name=f"{self.name}: {grid.cell(*self.cells[0]).name} is high-valued")
-        high = True
-        for c1,c2 in self.pairwise:
-            cell1, cell2 = grid.cell(*c1), grid.cell(*c2)
-            if high:
-                model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(start_high)
-                model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(~start_high)
-            else:
-                model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(~start_high)
-                model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(start_high)
-            high = not high
-
-    
-
-
-    
-
-
-
-class GermanWhisperGraph(MultiCellConstraint): # TODO
-    """For non-linear German Whisper formations.
-    
-    i.e. where at least one cell connects to at least 3 other cells
-    """
-    def __init__(self, *cells: Coords):
-        raise NotImplementedError
-
 
 
 class PickleballSolutionPrinter(MySolutionPrinter):
 
-    # @staticmethod
-    # def verify_type[T](pair:tuple[Coords,Coords], T:type) -> AdjacentCellPair:
-    # """"Casts pair of adjacent cell coordinates to type AdjacentCellPair, or
-    # raises TypeError if they are not adjacent."""
-    # if is_adjacent(pair):
-    #     return pair
-    # else:
-    #     raise TypeError(pair)
-
-    
-
-    @staticmethod
-    def partition_horizontal_vertical(border_constraints:Iterable[BorderConstraint]):
-        horizontal, vertical = partition(border_constraints, lambda x: x.is_horizontal) # pyright: ignore[reportAttributeAccessIssue]
-        return (
-              set(sorted(cons.cells)[0] for cons in horizontal)
-            , set(sorted(cons.cells)[0] for cons in vertical)
-            )
-
-    @staticmethod
-    def extract_disjoint_constraint_types(constraints:Iterable[Constraint], constraint_types:Iterable[type[Constraint]]) -> list[list[Constraint]]:
-        head, *tail = constraint_types
-        yes, no = partition(constraints, lambda x: isinstance(x, head))
-        yes = list(yes)
-        no, tail = peekable(no), peekable(tail)
-        if not no or not tail:
-            return [list(yes)]
-        else:
-            return [list(yes)] + PickleballSolutionPrinter.extract_disjoint_constraint_types(no, tail)
-
-
-
     def __init__(self, problem: SudokuProblem, correct_solution: list[list[int]] | None = None):
         (white_kropki, black_kropki) = partition_out_types(problem.constraints, WhiteKropki, BlackKropki)
-        self._white_kropki_print_targets: tuple[set[Coords], set[Coords]] = self.partition_horizontal_vertical(white_kropki) 
-        self._black_kropki_print_targets: tuple[set[Coords], set[Coords]] = self.partition_horizontal_vertical(black_kropki)  
+        self._white_kropki_print_targets: tuple[set[Coords], set[Coords]] = partition_horizontal_vertical(white_kropki) 
+        self._black_kropki_print_targets: tuple[set[Coords], set[Coords]] = partition_horizontal_vertical(black_kropki)  
         super().__init__(problem, correct_solution)
 
     def print_target(self, cell:Coords, *, invert_kropki_markings=False):
@@ -237,15 +78,22 @@ def pickleball():
             (2,1), (1,2)
         )
         , (
-            (5,1), (4,2), (3,3), (2,4), (1,5), (2,6), (3,7), (4,8), (5,9), (6,8), (7,7), (8,6), (9,5)
+              (5,1), (4,2), (3,3)
+            , (2,4), (1,5), (2,6)
+            , (3,7), (4,8), (5,9)
+            , (6,8), (7,7), (8,6)
+            , (9,5)
         )
         , (
-              (3,4), (3,5), (3,6), (4,7), (5,7), (6,7), (7,6), (7,5), (7,4), (6,3), (5,3), (4,3)
-            , (3,4) # closed loop
+              (3,4), (3,5), (3,6)
+            , (4,7), (5,7), (6,7)
+            , (7,6), (7,5), (7,4)
+            , (6,3), (5,3), (4,3)
+            , (3,4) # closed loop: repeat first cell
         )
         , (
-              (4,5), (5,6), (6,5), (5,4)
-            , (4,5) # closed loop
+              (4,5), (5,6), (6,5)
+            , (5,4), (4,5) # closed loop: repeat first cell
         ) 
         , (
             (6,2), (7,3), (8,4)
