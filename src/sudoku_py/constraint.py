@@ -35,7 +35,7 @@ class Constraint(ABC):
             constraint.apply(model, grid)
 
     @staticmethod
-    def handle_mismatched_compare(response_on_mismatch:bool|Exception|NotImplementedType):        
+    def handle_mismatched_types_in_compare(response_on_mismatch:bool|Exception|NotImplementedType):        
         def decorator[T](func:Callable[[T,T],bool]):
             def type_match(x:object, self:T) -> TypeGuard[T]:
                 return type(x) is type(self)
@@ -56,12 +56,12 @@ class Constraint(ABC):
         return tuple()
 
     @final
-    @handle_mismatched_compare(False)
+    @handle_mismatched_types_in_compare(False)
     def __eq__(self, other:Constraint) -> bool:
         return self._identifying_attributes == other._identifying_attributes
 
     @final
-    @handle_mismatched_compare(NotImplemented)
+    @handle_mismatched_types_in_compare(NotImplemented)
     def __lt__(self, other:Constraint) -> bool:
         return self._identifying_attributes < other._identifying_attributes
 

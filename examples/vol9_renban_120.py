@@ -139,3 +139,4 @@ if __name__=="__main__":
     solution_printer = _Printer(problem)
     problem.apply_constraints()
     problem.solve(CpSolver(), solution_printer=solution_printer)
+
