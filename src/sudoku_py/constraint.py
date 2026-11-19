@@ -412,3 +412,41 @@ class GermanWhisperGraph(MultiCellConstraint): # TODO
     """
     def __init__(self, *cells: Coords):
         raise NotImplementedError
+
+
+
+class Renban(MultiCellConstraint):
+    name:str
+    __INSTANCE_COUNT:int=0
+    _cells:frozenset[Coords]
+
+    @property
+    def cells(self) -> frozenset[Coords]:
+        return self._cells
+
+    def __init__(self, cells: Iterable[Coords]):
+        self._cells = frozenset(cells)
+        __class__.__INSTANCE_COUNT += 1 # increment program-wide instance count
+        self.name = f"{__class__.__name__}{self.__INSTANCE_COUNT}"
+
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        """Add constraints to model so that cells on the line form a consecutive set.
+
+        This is done by enforcing that all cells on the line are different, and that the maximum and minimum values on the line differ by exactly `len(self.cells)-1`.
+        """
+        # values must form consecutive set
+        cell_vars:set[IntVar] = set(grid.cell(*coords) for coords in self.cells)
+        # no repeat values
+        model.add_all_different(cell_vars)
+        value_bounds:tuple[int,int] = (
+              min(cell.domain.min() for cell in cell_vars)
+            , max(cell.domain.max() for cell in cell_vars)
+        )
+        # Define new variables to represent smallest and largest value on renban
+        min_cell = model.new_int_var(*value_bounds, f"min({self.name})")
+        model.add_min_equality(min_cell, cell_vars)
+        model.add_max_equality(min_cell+len(cell_vars)-1, cell_vars)
+
+    @property
+    def _identifying_attributes(self) -> tuple[frozenset[Coords]]:
+        return super()._identifying_attributes
