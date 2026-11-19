@@ -1,11 +1,10 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from functools import reduce, total_ordering, wraps
 from itertools import pairwise
 from types import NotImplementedType
-from typing import Iterable, TypeGuard, TypeVar
+from typing import Any, Iterable, TypeGuard, TypeVar, final
 
 from ortools.sat.python.cp_model import CpModel, IntVar
 
@@ -51,13 +50,24 @@ class Constraint(ABC):
             return wrapper
         return decorator
 
+    @property
+    @abstractmethod
+    def _identifying_attributes(self) -> tuple:
+        return tuple()
+
+    @final
     @handle_mismatched_compare(False)
     def __eq__(self, other:Constraint) -> bool:
-        return other is self
+        return self._identifying_attributes == other._identifying_attributes
 
+    @final
     @handle_mismatched_compare(NotImplemented)
-    def __lt__(self, other:Constraint):
-        return NotImplemented
+    def __lt__(self, other:Constraint) -> bool:
+        return self._identifying_attributes < other._identifying_attributes
+
+    @final
+    def __hash__(self) -> int:
+        return hash((type(self), *self._identifying_attributes))
 
 
 @total_ordering
@@ -68,28 +78,28 @@ class MultiCellConstraint(Constraint):
     Enforces a canonical (sorted) order for storing collections of cells
     so they can be easily checked without worrying about permutations.
     """
-    _cells:tuple[Coords, ...]
+    cells:frozenset[Coords]
 
-    def __init__(self, cells:Iterable[Coords]):
-        self._cells = tuple(cells)
-
-    @property
-    def cells(self) -> tuple[Coords, ...]:
-        return sort_cells(*self._cells)
-
-    @Constraint.handle_mismatched_compare(False)
-    def __eq__(self, other: MultiCellConstraint) -> bool:
-        return (self.cells==other.cells) 
-            
-    @Constraint.handle_mismatched_compare(NotImplemented)
-    def __lt__(self, other: MultiCellConstraint) -> bool: 
-        return self.cells < other.cells 
+    def __init__(self, cells:frozenset[Coords]) -> None:
+        self.cells = cells
 
     def __repr__(self) -> str:
-        kws = [f"{key}={value!r}" if key != "_cells" else f"cells={self.cells!r}" for key, value in self.__dict__.items()]
+        public_name = lambda s: s.lstrip("_")
+        kws = [
+            f"{key}={value!r}" if not key.startswith("_") 
+            else f"{public_name(key)}={getattr(self, public_name(key))!r}" 
+            for key, value in self.__dict__.items()
+        ]
         return "{}({})".format(type(self).__name__, ", ".join(kws))
 
-@dataclass
+    @property
+    @abstractmethod
+    def _identifying_attributes(self) -> tuple[frozenset[Coords]]:
+        return (self.cells,)
+
+
+    
+
 @total_ordering
 class SingleCellConstraint(Constraint):
     """Defines abstract interface for Sudoku constraints that act 
@@ -97,16 +107,13 @@ class SingleCellConstraint(Constraint):
     """
     cell:Coords
 
-    def __lt__(self, other:object) -> bool: 
-        if type(other) is not type(self):
-            raise NotImplemented
-        return self.cell < other.cell
+    def __init__(self, cell:Coords):
+        self.cell = cell
 
-    def _same_type__eq__(self: T, other: T) -> bool:
-        return (self.cell==other.cell) # pyright: ignore[reportAttributeAccessIssue]
-    
-    def _same_type__lt__(self: T, other: T) -> bool:
-            return (self.cell==other.cell) # pyright: ignore[reportAttributeAccessIssue]
+    @property
+    @abstractmethod
+    def _identifying_attributes(self) -> tuple[Any, ...]:
+        return (*super()._identifying_attributes, self.cell)
 
 
 class TwoCellConstraint(MultiCellConstraint):
@@ -116,7 +123,7 @@ class TwoCellConstraint(MultiCellConstraint):
     Enables the assumption that len(TwoCellConstraint.cells)==2,
     which is useful for type checking and adjacency requirements.
     """
-    _cells:tuple[Coords, Coords] = field(init=False, repr=False)
+    _cells:tuple[Coords, Coords]
 
     def __init__(self, cell1:Coords, cell2:Coords):
         self.cells = (cell1, cell2)
@@ -129,6 +136,10 @@ class TwoCellConstraint(MultiCellConstraint):
     def cells(self, pair:tuple[Coords,Coords]):
         self._cells = sort_cells(*pair)
 
+    @property
+    @abstractmethod
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return (self._cells,)
 
 class BorderConstraint(TwoCellConstraint):
     """Defines abstract interface for Sudoku constraints located
@@ -154,19 +165,17 @@ class BorderConstraint(TwoCellConstraint):
         dr, dc = cell2[0]-cell1[0], cell2[1]-cell1[1]
         return dr==0 and abs(dc)==1
 
-
 class LineConstraint(MultiCellConstraint):
     """Defines a constraint on a linear sequence of cells. 
     """
+    _cells:tuple[Coords, ...]
 
-    def __init__(self, cells:tuple[Coords,...]):
-        self._cells = cells # DO NOT SORT
+    def __init__(self, cells:Iterable[Coords]):
+        self._cells = tuple(cells) # DO NOT SORT
 
     @property
-    def cells(self) -> tuple[Coords,...]:
-        """Return cells constrained by this line in order.
-        """
-        return self._cells # DO NOT SORT
+    def cells(self) -> tuple[Coords, ...]:
+        return self._cells
 
     @property
     def pairwise(self) -> Iterable[tuple[Coords, Coords]]:
@@ -202,20 +211,28 @@ class SudokuConstraintType(Constraint):
             cls.instance = super().__new__(cls)
         return cls.instance
 
+    @property
+    def _identifying_attributes(self) -> tuple:
+        return tuple()
+
 SudokuConstraint = SudokuConstraintType()
 
 
-@dataclass
 class Given(SingleCellConstraint):
     """Represents a given cell value known to be true.
     """
     value: int
+    def __init__(self, cell: Coords, value:int):
+        super().__init__(cell)
+        self.value = value
 
     def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         model.add(grid.cell(*self.cell)==self.value)
 
-    def __hash__(self) -> int: # TODO: implement hash in ABCs as hash((type(self), *self.hashable_attributes))
-        return hash((type(self), self.cell, self.value))
+    @property
+    def _identifying_attributes(self) -> tuple[Coords, int]:
+        return (*super()._identifying_attributes, self.value)
+
 
 
 class Consecutive(TwoCellConstraint):
@@ -231,6 +248,10 @@ class Consecutive(TwoCellConstraint):
         )
         model.add_abs_equality(1, cell2-cell1)
 
+    @property
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return super()._identifying_attributes
+
 class Nonconsecutive(TwoCellConstraint):
     """Enforces that the values of two cells are nonconsecutive.
     """
@@ -238,6 +259,11 @@ class Nonconsecutive(TwoCellConstraint):
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 - cell2 != 1)
         model.add(cell2 - cell1 != 1)
+
+    @property
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return super()._identifying_attributes
+    
 
 ###############################################################################
 #############               BORDER CONSTRAINTS          #######################
@@ -250,12 +276,22 @@ class XBorder(BorderConstraint):
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 10)
 
+    @property
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return super()._identifying_attributes
+
+
 class VBorder(BorderConstraint):
     """Enforces that the sum of two *adjacent* cells is 5.
     """
     def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 == 5)
+
+    @property
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return super()._identifying_attributes
+
 
 class NegativeXBorder(TwoCellConstraint):
     """Enforces that the sum of two cells *IS NOT* 10.
@@ -264,6 +300,11 @@ class NegativeXBorder(TwoCellConstraint):
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 10)
 
+    @property
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return super()._identifying_attributes
+
+
 class NegativeVBorder(TwoCellConstraint):
     """Enforces that the sum of two cells *IS NOT* 5.
     """
@@ -271,10 +312,16 @@ class NegativeVBorder(TwoCellConstraint):
         cell1, cell2 = grid.cell(*self.cells[0]), grid.cell(*self.cells[1])
         model.add(cell1 + cell2 != 5)
 
+    @property
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return super()._identifying_attributes
+
+
 class WhiteKropki(BorderConstraint, Consecutive):
     """Enforces that two adjacent cells are consecutive.
     """
     pass
+
 
 class BlackKropki(BorderConstraint):
     """Enforces that two adjacent cells have a 2:1 ratio.
@@ -286,6 +333,11 @@ class BlackKropki(BorderConstraint):
         model.add(cell2 == 2 * cell1).only_enforce_if(cell2_is_twice_cell1)
         model.add(cell1 == 2 * cell2).only_enforce_if(~cell2_is_twice_cell1)
 
+    @property
+    def _identifying_attributes(self) -> tuple[tuple[Coords, Coords]]:
+        return super()._identifying_attributes
+
+
 
 
 
@@ -294,7 +346,6 @@ class BlackKropki(BorderConstraint):
 ###############################################################################
 
 @total_ordering
-@dataclass
 class WhisperLine(LineConstraint):
     """Defines a sequence of cells where consecutive cells must differ by at least some minimum difference.
 
@@ -306,7 +357,6 @@ class WhisperLine(LineConstraint):
         self._cells = cells # DO NOT SORT
         self.minimum_difference = minimum_difference
 
-
     def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
         for c1, c2 in self.pairwise:
             cell1, cell2 = grid.cell(*c1), grid.cell(*c2)
@@ -315,21 +365,12 @@ class WhisperLine(LineConstraint):
             model.add(cell1-cell2 >= self.minimum_difference).only_enforce_if(cell1_gt_cell2)
             model.add(cell2-cell1 >= self.minimum_difference).only_enforce_if(~cell1_gt_cell2)
 
-    @Constraint.handle_mismatched_compare(False)
-    def __eq__(self, other: WhisperLine) -> bool:
-        return super().__eq__(self, other) and self.minimum_difference==other.minimum_difference
-
-    @Constraint.handle_mismatched_compare(False)
-    def __lt__(self, other: WhisperLine) -> bool:
-        out = super().__lt__(self, other)
-        # use minimum_difference as a tie-breaker if needed
-        if not out:
-            return self.minimum_difference < other.minimum_difference
-        return out
+    @property
+    def _identifying_attributes(self) -> tuple[frozenset[Coords], int]:
+        return (*super()._identifying_attributes, self.minimum_difference)
 
 
 @total_ordering
-@dataclass(init=False)
 class GermanWhisperLine(WhisperLine):
     """Defines a sequence of cells where consecutive cells are connected by a German Whisper constraint.
 
@@ -341,7 +382,7 @@ class GermanWhisperLine(WhisperLine):
     """
     minimum_difference:int=5
     name:str
-    __INSTANCE_COUNT:int=field(default=0, repr=False, compare=False, hash=False)
+    __INSTANCE_COUNT:int=0
 
 
     def __init__(self, cells: Iterable[Coords], minimum_difference: int = 5):
