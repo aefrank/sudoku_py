@@ -39,7 +39,6 @@ class Constraint(ABC):
         def decorator[T](func:Callable[[T,T],bool]):
             def type_match(x:object, self:T) -> TypeGuard[T]:
                 return type(x) is type(self)
-
             @wraps(func)
             def wrapper(self:T, other:object) -> bool:
                 if type_match(other, self):
@@ -221,17 +220,17 @@ SudokuConstraint = SudokuConstraintType()
 class Given(SingleCellConstraint):
     """Represents a given cell value known to be true.
     """
-    value: int
-    def __init__(self, cell: Coords, value:int):
+    digit: int
+    def __init__(self, cell: Coords, digit:int):
         super().__init__(cell)
-        self.value = value
+        self.digit = digit
 
     def apply(self, model: CpModel, grid: SudokuGrid[IntVar]) -> None:
-        model.add(grid.cell(*self.cell)==self.value)
+        model.add(grid.cell(*self.cell)==self.digit)
 
     @property
     def _identifying_attributes(self) -> tuple[Coords, int]:
-        return (*super()._identifying_attributes, self.value)
+        return (*super()._identifying_attributes, self.digit)
 
 
 
@@ -265,9 +264,9 @@ class Nonconsecutive(TwoCellConstraint):
         return super()._identifying_attributes
     
 
-###############################################################################
-#############               BORDER CONSTRAINTS          #######################
-###############################################################################
+#########################################################
+#######               BORDER CONSTRAINTS          #######
+#########################################################
 
 class XBorder(BorderConstraint):
     """Enforces that the sum of two *adjacent* cells is 10.
@@ -341,9 +340,9 @@ class BlackKropki(BorderConstraint):
 
 
 
-###############################################################################
-############# ##              LINE CONSTRAINTS          #######################
-###############################################################################
+###########################################################
+########              LINE CONSTRAINTS          ###########
+###########################################################
 
 @total_ordering
 class WhisperLine(LineConstraint):
@@ -374,7 +373,7 @@ class WhisperLine(LineConstraint):
 class GermanWhisperLine(WhisperLine):
     """Defines a sequence of cells where consecutive cells are connected by a German Whisper constraint.
 
-    ASssumes minimum difference is defined to partition cells along line into alternating high and low digits.
+    Assumes minimum difference is defined to partition cells along line into alternating high and low digits.
     For example, for a traditional 9x9 sudoku where cells have values 1-9, minimum_difference=5. This makes
     consecutive cells on a German Whisper line alternate between values in {1,2,3,4} and those in {6,7,8,9}.
 
@@ -416,6 +415,8 @@ class GermanWhisperGraph(MultiCellConstraint): # TODO
 
 
 class Renban(MultiCellConstraint):
+    """Cells on a Renban line form a (non-ordered) set of consecutive digits.
+    """
     name:str
     __INSTANCE_COUNT:int=0
     _cells:frozenset[Coords]

@@ -47,7 +47,7 @@ def example1() -> tuple[CpSolver, CpSolverStatus]:
             , ((5,4),6), ((5,6),3)
             , ((6,1),5), ((6,3),6)
         ]
-    givens = [((r-1,c-1),v) for (r,c),v in givens]
+    givens = [((r-1,c-1), d) for (r,c), d in givens]
     given_constraints:list[Given] = [Given(cell, val) for cell, val in givens]
     problem.add_constraints(*given_constraints)
     problem.apply_constraints()

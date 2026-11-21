@@ -64,7 +64,7 @@ def problem_setup():
 
 
     constraint_list:list[Constraint] = concatenate_constraint_lists((
-          [Given(remove_offset(cell, 1), value) for cell, value in givens]
+          [Given(remove_offset(cell, 1), digit) for cell, digit in givens]
         , [Renban(remove_offset(line, 1)) for line in renban_lines]
         ))
 
