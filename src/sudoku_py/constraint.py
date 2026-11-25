@@ -83,11 +83,10 @@ class MultiCellConstraint(Constraint):
         self.cells = cells
 
     def __repr__(self) -> str:
-        public_name = lambda s: s.lstrip("_")
         kws = [
-            f"{key}={value!r}" if not key.startswith("_") 
-            else f"{public_name(key)}={getattr(self, public_name(key))!r}" 
+            f"{key}={value!r}"  
             for key, value in self.__dict__.items()
+            if not key.startswith("_")
         ]
         return "{}({})".format(type(self).__name__, ", ".join(kws))
 
