@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from time import time
 from typing import Any, Optional, overload
 import functools as ft
@@ -59,7 +59,7 @@ class MyProblemSetup(SudokuProblem):
     def __init__( self
                 , *
                 , one_indexed:bool
-                , constraints: list[Constraint]
+                , constraints: Sequence[Constraint]
                 , sudoku_size:int=9
                 , sudoku_box_dims:tuple[int,int]=(3,3)
                 , correct_solution:Optional[list[list[int]]]=None

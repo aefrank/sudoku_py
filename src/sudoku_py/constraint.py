@@ -200,8 +200,7 @@ class SudokuConstraintType(Constraint):
         for col in grid.cols():
             model.add_all_different(col)
         for box in grid.boxes():
-            box_cells = reduce(lambda x,y: x+y, box)
-            model.add_all_different(box_cells)
+            model.add_all_different(box)
 
     instance = None
     def __new__(cls):

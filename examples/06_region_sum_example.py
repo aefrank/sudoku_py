@@ -3,20 +3,20 @@ https://logic-masters.de/Raetselportal/Raetsel/zeigen.php?id=000MOD
 """
 
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 import itertools as it
 import functools as ft
-from typing import Any, Iterable, Optional, Self, TypeGuard, overload
+from typing import Any, Iterable, Optional, Self, TypeGuard, cast, overload
 from frozendict import frozendict, deepfreeze
 from more_itertools import peekable
 
 
-from ortools.sat.python.cp_model import CpModel
+from ortools.sat.python.cp_model import CpModel, IntVar
 
-from my_utils import MyProblemSetup, remove_offset
-from sudoku_py.constraint import MultiCellConstraint
-from sudoku_py.core import Coords, is_Coords, partition
+from my_utils import MyProblemSetup, MySolutionPrinter, remove_offset
+from sudoku_py.constraint import Given, MultiCellConstraint, Renban, WhiteKropki
+from sudoku_py.core import Coords, is_Coords, partition, partition_out_types
 from sudoku_py.grid import SudokuGrid
 
 
@@ -316,11 +316,16 @@ def disjoint_partition[T](values:Iterable[T], predicate:Callable[[T], bool], *mo
 
 
 class RegionSum(GraphConstraint):
+    name:str
+    __INSTANCE_COUNT:int=0
+            
     def __init__(self, graph: CellGraph | FrozenCellGraph) -> None:
         super().__init__(graph)
+        __class__.__INSTANCE_COUNT += 1 # increment program-wide instance count
+        self.name = f"{__class__.__name__}{self.__INSTANCE_COUNT}"
 
     @staticmethod
-    def segment_graph_by_regions(fcg:FrozenCellGraph, regions:list[Iterable[Coords]]):
+    def segment_graph_by_regions(fcg:FrozenCellGraph, regions:Sequence[Iterable[Coords]]):
         def region_idx(cell:Coords):
             for i, region in enumerate(regions):
                 if cell in region:
@@ -329,19 +334,6 @@ class RegionSum(GraphConstraint):
             raise ValueError(cell) 
 
         cg:CellGraph = CellGraph.from_FrozenCellGraph(fcg)
-
-        # # region_predicates:list[Callable[[Coords], bool]] = [lambda cell: (cell in region) for region in regions]
-        # # cells_per_region:list[filter[Coords]|it.filterfalse[Coords]] = disjoint_partition(cg.cells, *region_predicates)
-        
-        # region_edges_predicates:list[Callable[[tuple[Coords,Coords]], bool]] = [
-        #     lambda edge: ((edge[0] in region) and (edge[1] in region)) 
-        #     for region in regions
-        # ]
-        # edges_in_region: list[filter[tuple[Coords, Coords]] | it.filterfalse[tuple[Coords,Coords]]] = disjoint_partition(cg.edges, *region_edges_predicates)
-        # N = len(regions)
-        # assert len(edges_in_region) == N+1
-        # # edges_in_region[N] should hold all cross-region edges
-        # for edge in edges_in_region[N]:
 
         cross_region_edges = filter(
             lambda edge: region_idx(edge[0]) != region_idx(edge[1])
@@ -352,6 +344,7 @@ class RegionSum(GraphConstraint):
 
         segments:list[set[Coords]] = WeaklyConnectedComponents(cg).weakly_connected_components()
 
+        # Prototyping test: Check some properties that should hold
         for i, segment in enumerate(segments):
             # Check that segments are disjoint
             for s in segments[i+1:]:
@@ -364,25 +357,118 @@ class RegionSum(GraphConstraint):
 
 
     def apply(self, model: CpModel, grid: SudokuGrid) -> None:
-        raise NotImplementedError
+        segments:list[set[Coords]] = self.segment_graph_by_regions(
+              self._graph
+            , [[grid.index(cell) for cell in box] for box in grid.boxes()]
+            )
+        segment_vars:list[list[IntVar]] = [[grid.cell(*cell) for cell in segment] for segment in segments]
+        for vars1, vars2 in it.combinations(segment_vars, 2): # TODO: can probably cut this down to it.pairwise because of transitivity
+            model.add(sum(vars1) == sum(vars2))
+
+        
 
 
 
 
 
         
-        
-        
+type NestedSequence[T] = T | Sequence[NestedSequence[T]]        
+
+
+def undo_offset[C:NestedSequence[Coords]](data:C, offset:int=1) -> C:
+    if not is_Coords(data):
+        processed = (undo_offset(item) for item in data)
+        try:
+            return cast(C, type(data)(processed)) # pyright: ignore[reportCallIssue]
+        except TypeError:
+            # if type(data) constructor fails, cast from list
+            return cast(C, list(processed))
+    else:
+        r:int
+        c:int
+        r,c = data
+        return cast(C, (r-offset, c-offset))
+    
+
+class _Printer(MySolutionPrinter):
+    _regionsum_cells:set[Coords]
+    _renban_cells:set[Coords]
+
+    def __init__(self, problem: MyProblemSetup):
+        super().__init__(problem, problem.correct_solution)
+        region_sum, renban = (set(out) for out in partition_out_types(problem.constraints, *[RegionSum, Renban]))
+        self._renban_cells = set()
+        for r in renban:
+            self._renban_cells.update(r.cells)
+        self._regionsum_cells = set()
+        for rs in region_sum:
+            self._regionsum_cells.update(rs.cells)
+
+
+    def print_target(self, var: IntVar, coords: Coords):
+        # prefix:str = "\033["
+        format:list[str] = []
+        if coords in self._regionsum_cells:
+            format += ["1"]
+        if coords in self._renban_cells:
+            format += ["35"]
+        prefix:str = "\033[" + ";".join(format) + "m"
+        suffix:str = "\033[0m"
+        print(f"{prefix}{self.value(var)}{suffix}", end="  ")
 
 
     
+def shared_spaced_renban_constraints() -> list[Renban]:
+    renban_lines:list[list[Coords]] = [
+              [ (1,9), (1,8), (2,8), (3,8) ]
+            , [ (2,3), (2,2), (3,2) ]
+            , [ (2,4), (3,4), (3,5), (3,6), (4,2), (4,3), (5,3), (6,3) ]
+            , [ (4,4), (5,4), (5,5), (5,6) ]
+            , [ (4,7), (4,8), (4,9) ]
+            , [ (5,8), (6,8), (6,9) ]
+            , [ (6,4), (6,5), (6,6) ]
+            , [ (7,4), (8,4), (9,4) ]
+            , [ (8,5), (8,6), (9,6) ]
+            , [ (7,8), (8,8) ]
+        ]
+    renban_constraints:list[Renban] = [Renban(coords) for coords in undo_offset(renban_lines)]
+    return renban_constraints
 
-    
+def shared_spaced_regionsum_constraints() -> list[RegionSum]:
+    RS1:list[Coords] = [(6,2), (7,2), (8,2)]
+    RS2:list[Coords] = [(6,7), (6,8), (7,8), (8,8), (8,7), (8,6), (7,6)]
+    RS3:list[list[Coords]] = [
+                [(5,4), (4,4), (4,5), (4,6), (4,7), (4,8), (4,9)]
+            , [(4,6), (3,6), (3,5), (3,4), (2,4), (2,3), (2,2), (3,2), (4,2), (4,3), (5,3), (6,3), (6,4), (6,5), (6,6), (5,6)]
+            , [(6,4), (7,4), (8,4), (9,4), (9,5)]
+        ]
+    region_sum_constraints:list[RegionSum] = [RegionSum(CellGraph(arg)) for arg in undo_offset((
+                    # [],  # for debugging
+                      RS1
+                    , RS2
+                    , RS3
+                    ))]
+    return region_sum_constraints
+
+def shared_space_whitekropki_constraints() -> list[WhiteKropki]:
+    white_kropki_locations:list[tuple[Coords, Coords]] = [
+          ((1,5), (2,5))
+        , ((1,6), (2,6))
+        , ((1,7), (2,7))
+        , ((5,1), (5,2))
+        , ((6,1), (6,2))
+    ]
+    white_kropki_constraints:list[WhiteKropki] = [WhiteKropki(*coords) for coords in undo_offset(white_kropki_locations)]
+    return white_kropki_constraints
+
+
+
+
 
 
 def main():
     SOLUTION:list[list[int]] = [
-        [2,3,1,9,6,4,5,8,7]
+          [2,3,1,9,6,4,5,8,7]
         , [8,6,7,1,5,3,4,9,2]
         , [4,5,9,2,8,7,1,6,3]
         , [9,4,3,8,2,1,6,7,5]
@@ -393,45 +479,21 @@ def main():
         , [5,9,2,4,3,8,7,1,6]
     ]
 
-    region_sum_lines = [
-        [ 
-            (6,2), (7,2), (8,2) 
-        ]
-        , [ 
-            (6,7), (6,8), (7,8), (8,8), (8,7), (8,6), (7,6) 
-        ]
-        , [
-            [ 
-                (5,4), (4,4), (4,5), (4,6), (4,7), (4,8), (4,9) 
-            ]
-            , [ 
-                (4,6), (3,6), (3,5), (3,4), (2,4), (2,3), (2,2), (3,2), (4,2), (4,3), (5,3), (6,3), (6,4), (6,5), (6,6), (5,6) 
-            ]
-            , [ 
-                (6,4), (7,4), (8,4), (9,4), (9,5) 
-            ]
-        ]
-    ]
-    region_sum_lines[0] = [(r-1, c-1) for (r,c) in region_sum_lines[0]]
-    region_sum_lines[1] = [(r-1, c-1) for (r,c) in region_sum_lines[1]]
+    
 
-    region_sum_lines[2] = [[(r-1, c-1) for (r,c) in line] for line in region_sum_lines[2]]
+    
 
 
 
-    region_sum_constraints = [RegionSum(arg) for arg in region_sum_lines]
     problem = MyProblemSetup(
                       one_indexed=True
-                    , constraints=[c for c in region_sum_constraints]
+                    , constraints=shared_space_whitekropki_constraints() + shared_spaced_regionsum_constraints() + shared_spaced_renban_constraints()
                     , correct_solution=SOLUTION
                 )
     
     
-    boxes_of_vars = [list(it.chain(*box)) for box in problem.grid.boxes()]
-    regions:list[list[Coords]] = [[problem.grid.index(cell) for cell in box] for box in boxes_of_vars]
-    RS = region_sum_constraints[2]
-    RegionSum.segment_graph_by_regions(RS._graph, [region for region in regions])
-    print()
+    problem.apply_constraints()
+    problem.solve(solution_printer=_Printer(problem))
 
 if __name__=="__main__":
     main()

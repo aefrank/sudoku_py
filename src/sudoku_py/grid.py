@@ -63,8 +63,10 @@ class BaseSudokuGrid(Generic[T]):
     def cols(self) -> list[list[T]]:
         return [self.col(i) for i in range(self.size)]
 
-    def boxes(self) -> list[list[list[T]]]:
-        return [self.box(i) for i in range(self.rows_of_boxes*self.cols_of_boxes)]
+    def boxes(self) -> list[list[T]]:
+        boxes:list[list[list[T]]]  = [self.box(i) for i in range(self.rows_of_boxes*self.cols_of_boxes)]
+        flat_boxes:list[list[T]] = [ft.reduce(lambda x,y: x+y, box) for box in boxes]
+        return flat_boxes
 
     def cells(self) -> list[T]:
         return ft.reduce(lambda x,y: x+y, self.rows())
@@ -77,7 +79,7 @@ class BaseSudokuGrid(Generic[T]):
 
     def get_box(self, item:T) -> int:
         for i,box in enumerate(self.boxes()):
-            if item in ft.reduce(lambda x,y: x+y, box):
+            if item in box:
                 return i
         # if we get to here, item does not exist in grid
         raise ValueError(item)

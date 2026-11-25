@@ -1,4 +1,5 @@
 
+from collections.abc import Sequence
 from typing import Optional
 
 from ortools.sat.python.cp_model import CpModel, IntVar
@@ -18,7 +19,7 @@ class SudokuProblem:
     def __init__(  self
                  , size:int=9
                  , box_dims:tuple[int,int]=(3,3)
-                 , constraints:list[Constraint]=[]
+                 , constraints:Sequence[Constraint]=[]
                  , *
                  , min_value:int=1 
                  , max_value:Optional[int]=None
