@@ -3,7 +3,8 @@ https://logic-masters.de/Raetselportal/Raetsel/zeigen.php?id=000MOD
 """
 
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence, Set
+from copy import deepcopy
 from dataclasses import dataclass
 import itertools as it
 import functools as ft
@@ -28,7 +29,9 @@ class CellGraph(MutableMapping[Coords, set[Coords]]):
     _graph:defaultdict[Coords, set[Coords]]
     _directed:bool
 
-    
+    #######################################
+    # Object Creation
+
     @overload
     def __init__(self, arg0:Iterable[tuple[Coords, Coords]]=[], directed=False) -> None: ...
     @overload
@@ -55,6 +58,82 @@ class CellGraph(MutableMapping[Coords, set[Coords]]):
         else:
             raise TypeError(arglist)
 
+    def deepcopy(self) -> CellGraph:
+        cg = CellGraph()
+        cg._graph = defaultdict(set, {deepcopy(parent): set(deepcopy(children)) for parent, children in self.items()})
+        cg._directed = self._directed
+        return cg
+
+    @classmethod
+    def from_FrozenCellGraph(cls, fcg:FrozenCellGraph) -> CellGraph:
+        cg = CellGraph()
+        cg._graph = defaultdict(set, {deepcopy(parent): set(deepcopy(children)) for parent, children in fcg.items()})
+        cg._directed = fcg._directed
+        return cg
+
+    #######################################
+    # Properties
+
+    @property
+    def cells(self) -> set[Coords]:
+        return set(self._graph.keys())
+    
+    @property
+    def edges(self) -> set[tuple[Coords, Coords]]:
+        out:set[tuple[Coords, Coords]] = set()
+        for cell in self.cells:
+            out |= self.get_edges_from(cell)
+        return out
+    
+    #######################################
+    # Graph Query Methods
+    
+    def get_edges_from(self, cell:Coords) -> set[tuple[Coords, Coords]]:
+        return set((cell, child) for child in self[cell])
+
+    def get_edges_to(self, cell:Coords) -> set[tuple[Coords, Coords]]:
+        return set((cell2, cell) for cell2, children in self.items() if cell in children)
+
+    def get_edges(self, cell:Coords) -> set[tuple[Coords, Coords]]:
+            return self.get_edges_from(cell) | self.get_edges_to(cell)
+
+    def get_WCC(self) -> list[frozenset[Coords]]:
+        """Return weakly connected components (WCCs) of graph.
+
+        For an undirected graph, returns the connected components. For a directed graph, WCC = connected components of underlying undirected graph.
+
+        Adapted from code from https://www.geeksforgeeks.org/dsa/find-weakly-connected-components-in-a-directed-graph/
+        """
+        GRAPH:CellGraph = CellGraph(self.edges, directed=False) if self._directed else self
+
+        def extract_component(
+                cell:Coords
+                , visited:Mapping[Coords, bool]
+                , component:Set[Coords]=frozenset()
+            ) -> tuple[frozendict[Coords, bool], frozenset[Coords]]:
+            """Recursively collects all children of cell until all reachable cells are collected.
+
+            Does not mutate inputs.
+            """
+            visited_prime:frozendict[Coords, bool] = frozendict((c,True) if c==cell else (c,v) for c,v in visited.items())
+            component_prime:frozenset[Coords] = frozenset((*component, cell))
+            for child in GRAPH[cell]:
+                if not visited_prime[child]:
+                    visited_prime, component_prime = extract_component(child, visited_prime, component_prime)
+            return visited_prime, component_prime
+
+        connected_components:list[frozenset[Coords]] = []
+        # component:Set[Coords]
+        is_visited:frozendict[Coords, bool] = frozendict((cell, False) for cell in GRAPH.cells)
+        for cell in GRAPH.cells:
+            if not is_visited[cell]:
+                is_visited, component = extract_component(cell, is_visited)
+                connected_components.append(component)
+        return connected_components
+    
+     
+    #######################################
+    # Mutating Methods
 
     def add_consecutive_edges(self, cells:Iterable[Coords]) -> None:
         """Add edges between all pairs of consecutive cells on a line.
@@ -94,25 +173,9 @@ class CellGraph(MutableMapping[Coords, set[Coords]]):
             except KeyError:
                 pass
 
-    @property
-    def cells(self) -> set[Coords]:
-        return set(self._graph.keys())
 
-    @property
-    def edges(self) -> set[tuple[Coords, Coords]]:
-        out:set[tuple[Coords, Coords]] = set()
-        for cell in self.cells:
-            out |= self.get_edges_from(cell)
-        return out
-
-    def get_edges_from(self, cell:Coords) -> set[tuple[Coords, Coords]]:
-        return set((cell, child) for child in self[cell])
-
-    def get_edges_to(self, cell:Coords) -> set[tuple[Coords, Coords]]:
-        return set((cell2, cell) for cell2, children in self.items() if cell in children)
-
-    def get_edges(self, cell:Coords) -> set[tuple[Coords, Coords]]:
-        return self.get_edges_from(cell) | self.get_edges_to(cell)
+    #######################################
+    # Private/Dunder methods
 
     def __repr__(self) -> str: # TODO: consider a more compact __repr__
         return f"{self.__class__.__name__}({dict(self._graph)})"
@@ -131,14 +194,6 @@ class CellGraph(MutableMapping[Coords, set[Coords]]):
     
     def __len__(self) -> int:
         return len(self._graph)
-
-    @classmethod
-    def from_FrozenCellGraph(cls, fcg:FrozenCellGraph) -> CellGraph:
-        cg = CellGraph()
-        cg._graph = defaultdict(set, {parent: set(children) for parent, children in fcg.items()})
-        cg._directed = fcg._directed
-        return cg
-
 
     @staticmethod
     def __is_edge_iterable(init_arg:Iterable[Any]) -> TypeGuard[Iterable[tuple[Coords, Coords]]]:
@@ -225,68 +280,44 @@ class FrozenCellGraph(Mapping[Coords, frozenset[Coords]]):
         return CellGraph.from_FrozenCellGraph(self)
             
 
+def get_wcc(graph:CellGraph) -> list[frozenset[Coords]]:
+    """Return weakly connected components (WCCs) of graph.
+
+    For an undirected graph, returns the connected components. For a directed graph, WCC = connected components of underlying undirected graph.
+
+    Adapted from code from https://www.geeksforgeeks.org/dsa/find-weakly-connected-components-in-a-directed-graph/
+    """
+    GRAPH:CellGraph = CellGraph(graph.edges, directed=False) if graph._directed else graph
+
+    def extract_component(
+              cell:Coords
+            , visited:Mapping[Coords, bool]
+            , component:Set[Coords]=frozenset()
+        ) -> tuple[frozendict[Coords, bool], frozenset[Coords]]:
+        """Recursively collects all children of cell until all reachable cells are collected.
+
+        Does not mutate inputs.
+        """
+        visited_prime:frozendict[Coords, bool] = frozendict((c,True) if c==cell else (c,v) for c,v in visited.items())
+        component_prime:frozenset[Coords] = frozenset((*component, cell))
+        for child in GRAPH[cell]:
+            if not visited_prime[child]:
+                visited_prime, component_prime = extract_component(child, visited_prime, component_prime)
+        return visited_prime, component_prime
+
+    connected_components:list[frozenset[Coords]] = []
+    component:Set[Coords]
+    is_visited:frozendict[Coords, bool] = frozendict((cell, False) for cell in GRAPH.cells)
+    for cell in GRAPH.cells:
+        if not is_visited[cell]:
+            is_visited, component = extract_component(cell, is_visited)
+            connected_components.append(component)
+    return connected_components
 
 
-# based on code from https://www.geeksforgeeks.org/dsa/find-weakly-connected-components-in-a-directed-graph/
-class WeaklyConnectedComponents:
-    def __init__(self, graph: CellGraph):
-        self.graph = graph
-    
-    
-    #  Finds all the connected components
-   # of the given undirected graph
-    def connected_components(self, undirected_graph:CellGraph) -> list[set[Coords]]:
-        assert not undirected_graph._directed
-        N:int = len(undirected_graph)
-
-        connected_components:list[set[Coords]] = []
-        is_visited:dict[Coords, bool] = {cell:False for cell in undirected_graph.cells}
-
-        for cell in undirected_graph.cells:
-            if not is_visited[cell]:
-                component:set[Coords] = set()
-                self.find_connected_component(cell, is_visited, component, undirected_graph)
-                connected_components.append(component)
-
-        return connected_components
- 
-    # Finds a connected component
-    # starting from source using DFS
-    def find_connected_component(self, src:Coords, is_visited:dict[Coords, bool], component:set[Coords], undirected_graph:CellGraph):
-        assert not undirected_graph._directed
-
-        is_visited[src] = True
-        component.add(src)
-
-        for child in undirected_graph[src]:
-            if not is_visited[child]:
-                self.find_connected_component(child, is_visited, component, undirected_graph)
-  
-    def weakly_connected_components(self):
-       #Step 1: Construct the
-        # underlying undirected graph
-        undirected_graph = CellGraph(self.graph.edges, directed=False) if self.graph._directed else self.graph
-        return self.connected_components(undirected_graph)
-
-
-
-        
 
 class GraphConstraint(MultiCellConstraint):
     _graph:FrozenCellGraph
-
-    # @classmethod
-    # def from_edges(cls, edges:Iterable[tuple[Coords, Coords]], directed:bool=False) -> Self:
-    #     return cls(CellGraph(edges, directed))
-
-    # @classmethod
-    # def from_lines(cls, lines:Iterable[Iterable[Coords]], directed:bool=False) -> Self:
-    #     return cls(CellGraph(lines, directed))
-
-    # @classmethod
-    # def from_line(cls, line:Iterable[Coords], directed:bool=False) -> Self:
-    #     return cls(CellGraph([line], directed))
-
     def __init__(self, graph: CellGraph | FrozenCellGraph) -> None:
         if not isinstance(graph, FrozenCellGraph):
             self._graph = FrozenCellGraph(graph)
@@ -325,44 +356,54 @@ class RegionSum(GraphConstraint):
         self.name = f"{__class__.__name__}{self.__INSTANCE_COUNT}"
 
     @staticmethod
-    def segment_graph_by_regions(fcg:FrozenCellGraph, regions:Sequence[Iterable[Coords]]):
-        def region_idx(cell:Coords):
+    def segment_graph_by_regions(graph: CellGraph | FrozenCellGraph, regions: Sequence[Sequence[Coords]]) -> list[frozenset[Coords]]:
+        """Return graph segments divided by region borders.
+        """
+        def rid(cell:Coords):
+            """Get region id of cell"""
             for i, region in enumerate(regions):
                 if cell in region:
                     return i
             # cell not found
             raise ValueError(cell) 
 
-        cg:CellGraph = CellGraph.from_FrozenCellGraph(fcg)
+        def __graph_segments_sanity_check(segments:list[frozenset[Coords]]) -> None:
+                """Prototyping test: Check some properties that should hold"""
+                for i, segment in enumerate(segments):
+                    # Check that segments are disjoint
+                    for s in segments[i+1:]:
+                        assert segment.isdisjoint(s)
+        
+                    # check that all cells in segment are in same region
+                    assert len(set(rid(cell) for cell in segment)) == 1
 
-        cross_region_edges = filter(
-            lambda edge: region_idx(edge[0]) != region_idx(edge[1])
-            , cg.edges
-        )
-        for edge in cross_region_edges:
+        # Create copy of graph that is safe to mutate
+        cg:CellGraph = CellGraph.from_FrozenCellGraph(graph) if isinstance(graph, FrozenCellGraph) else graph.deepcopy()
+
+        # Remove all cross-region edges
+        for edge in filter(lambda edge: rid(edge[0])!=rid(edge[1]), cg.edges):
             cg.remove_edge(edge)
 
-        segments:list[set[Coords]] = WeaklyConnectedComponents(cg).weakly_connected_components()
+        # Find weakly-connected components of graph
+        segments:list[frozenset[Coords]] = cg.get_WCC()
 
-        # Prototyping test: Check some properties that should hold
-        for i, segment in enumerate(segments):
-            # Check that segments are disjoint
-            for s in segments[i+1:]:
-                assert segment.isdisjoint(s)
-
-            # check that all cells in segment are in same region
-            assert len(set(region_idx(cell) for cell in segment)) == 1
+        # Check some invariants that should hold
+        __graph_segments_sanity_check(segments)
 
         return segments
 
 
     def apply(self, model: CpModel, grid: SudokuGrid) -> None:
-        segments:list[set[Coords]] = self.segment_graph_by_regions(
+        segments:list[frozenset[Coords]] = self.segment_graph_by_regions(
               self._graph
             , [[grid.index(cell) for cell in box] for box in grid.boxes()]
             )
+        """Region sum lines are segmented by region borders. Digits along each segment must sum to the same value. 
+        
+        Note that if a region sum line enters the same region twice, each of the two segments counts as separate sums. 
+        """
         segment_vars:list[list[IntVar]] = [[grid.cell(*cell) for cell in segment] for segment in segments]
-        for vars1, vars2 in it.combinations(segment_vars, 2): # TODO: can probably cut this down to it.pairwise because of transitivity
+        for vars1, vars2 in it.pairwise(segment_vars):
             model.add(sum(vars1) == sum(vars2))
 
         
