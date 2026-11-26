@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterable, Sequence
 from time import time
-from typing import Any, Optional, overload
+from typing import Any, Optional, cast, overload
 import functools as ft
 import itertools as it
 
@@ -12,6 +12,24 @@ from sudoku_py.problem import SudokuProblem
 
 def concatenate_constraint_lists(iterable_of_lists:Iterable[Iterable[Constraint]]) -> list[Constraint]:
     return [elem for elem in it.chain(*iterable_of_lists)]
+
+
+type NestedSequence[T] = T | Sequence[NestedSequence[T]]        
+def undo_offset[C:NestedSequence[Coords]](data:C, offset:int=1) -> C:
+    if not is_Coords(data):
+        processed = (undo_offset(item) for item in data)
+        try:
+            return cast(C, type(data)(processed)) # pyright: ignore[reportCallIssue]
+        except TypeError:
+            # if type(data) constructor fails, cast from list
+            return cast(C, list(processed))
+    else:
+        r:int
+        c:int
+        r,c = data
+        return cast(C, (r-offset, c-offset))
+
+
 
 @overload
 def remove_offset(coords:Coords, offset=1) -> Coords: ...
@@ -54,7 +72,7 @@ class MyProblemSetup(SudokuProblem):
     one_indexed:bool
     correct_solution:Optional[list[list[int]]]
     solution_printer:Optional[CpSolverSolutionCallback]
-    constraints_applied:bool = False
+    constraints_applied:bool
 
     def __init__( self
                 , *
@@ -66,12 +84,14 @@ class MyProblemSetup(SudokuProblem):
                 ) -> None:
         self.one_indexed = one_indexed
         self.correct_solution = correct_solution
+        self.constraints_applied = False
         super().__init__(
               size=sudoku_size
             , box_dims=sudoku_box_dims
             , constraints=constraints
             , one_indexed_cell_names=self.one_indexed
         )
+
 
     def solve(self, solver:CpSolver=CpSolver(), *, solution_printer:Optional[CpSolverSolutionCallback]=None, enumerate_all_solutions:bool=True, print=True) -> tuple[CpSolverStatus, CpSolver]:
         self.apply_constraints()
@@ -83,6 +103,7 @@ class MyProblemSetup(SudokuProblem):
     def apply_constraints(self):
         if not self.constraints_applied:
             super().apply_constraints()
+            self.constraints_applied = True
 
     
 

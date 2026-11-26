@@ -7,14 +7,14 @@ Rules: Kropki and German Whispers
 
 from my_utils import MyProblemSetup, MySolutionPrinter, concatenate_constraint_lists, partition_horizontal_vertical, remove_offset
 from sudoku_py.constraint import BlackKropki, Constraint, GermanWhisperLine, WhiteKropki
-from sudoku_py.core import Coords, partition, partition_out_types
+from sudoku_py.core import Coords, partition_out_disjoint_types
 from sudoku_py.problem import SudokuProblem
 
 
 class PickleballSolutionPrinter(MySolutionPrinter):
 
     def __init__(self, problem: SudokuProblem, correct_solution: list[list[int]] | None = None):
-        (white_kropki, black_kropki) = partition_out_types(problem.constraints, WhiteKropki, BlackKropki)
+        (white_kropki, black_kropki) = partition_out_disjoint_types(problem.constraints, WhiteKropki, BlackKropki)
         self._white_kropki_print_targets: tuple[set[Coords], set[Coords]] = partition_horizontal_vertical(white_kropki) 
         self._black_kropki_print_targets: tuple[set[Coords], set[Coords]] = partition_horizontal_vertical(black_kropki)  
         super().__init__(problem, correct_solution)

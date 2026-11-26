@@ -132,3 +132,6 @@ class SudokuGrid(BaseSudokuGrid[T]):
 
     def is_vertical_neighbor(self, cell1:T, cell2:T) -> bool:
         return self.same_col(cell1,cell2) and (abs(self.get_row(cell1)-self.get_row(cell2))==1)
+
+
+

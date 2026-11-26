@@ -1,14 +1,16 @@
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import reduce, total_ordering, wraps
 from itertools import pairwise
 from types import NotImplementedType
 from typing import Any, Iterable, TypeGuard, TypeVar, final
 
+from frozendict import frozendict
 from ortools.sat.python.cp_model import CpModel, IntVar
 
 from sudoku_py.core import AdjacentCellPair, Coords, sort_cells, verify_adjacency
+from sudoku_py.graph import CellGraph, FrozenCellGraph
 from sudoku_py.grid import SudokuGrid
 
 T = TypeVar("T")
@@ -449,3 +451,79 @@ class Renban(MultiCellConstraint):
     @property
     def _identifying_attributes(self) -> tuple[frozenset[Coords]]:
         return super()._identifying_attributes
+
+
+
+class GraphConstraint(MultiCellConstraint):
+    _graph:FrozenCellGraph
+    def __init__(self, graph: CellGraph | FrozenCellGraph) -> None:
+        if not isinstance(graph, FrozenCellGraph):
+            self._graph = FrozenCellGraph(graph)
+        else:
+            self._graph = graph
+        self.cells = self._graph.cells
+
+    @property
+    def _identifying_attributes(self) -> tuple[frozendict[Coords, frozenset[Coords]]]:
+        return (self._graph._data,)
+
+
+class RegionSum(GraphConstraint):
+    name:str
+    __INSTANCE_COUNT:int=0
+            
+    def __init__(self, graph: CellGraph | FrozenCellGraph) -> None:
+        super().__init__(graph)
+        __class__.__INSTANCE_COUNT += 1 # increment program-wide instance count
+        self.name = f"{__class__.__name__}{self.__INSTANCE_COUNT}"
+
+    @staticmethod
+    def segment_graph_by_regions(graph: CellGraph | FrozenCellGraph, regions: Sequence[Sequence[Coords]]) -> list[frozenset[Coords]]:
+        """Return graph segments divided by region borders.
+        """
+        def rid(cell:Coords):
+            """Get region id of cell"""
+            for i, region in enumerate(regions):
+                if cell in region:
+                    return i
+            # cell not found
+            raise ValueError(cell) 
+
+        def __graph_segments_sanity_check(segments:list[frozenset[Coords]]) -> None:
+                """Prototyping test: Check some properties that should hold"""
+                for i, segment in enumerate(segments):
+                    # Check that segments are disjoint
+                    for s in segments[i+1:]:
+                        assert segment.isdisjoint(s)
+        
+                    # check that all cells in segment are in same region
+                    assert len(set(rid(cell) for cell in segment)) == 1
+
+        # Create copy of graph that is safe to mutate
+        cg:CellGraph = CellGraph.from_FrozenCellGraph(graph) if isinstance(graph, FrozenCellGraph) else graph.deepcopy()
+
+        # Remove all cross-region edges
+        for edge in filter(lambda edge: rid(edge[0])!=rid(edge[1]), cg.edges):
+            cg.remove_edge(edge)
+
+        # Find weakly-connected components of graph
+        segments:list[frozenset[Coords]] = cg.get_WCC()
+
+        # Check some invariants that should hold
+        __graph_segments_sanity_check(segments)
+
+        return segments
+
+
+    def apply(self, model: CpModel, grid: SudokuGrid) -> None:
+        segments:list[frozenset[Coords]] = self.segment_graph_by_regions(
+              self._graph
+            , [[grid.index(cell) for cell in box] for box in grid.boxes()]
+            )
+        """Region sum lines are segmented by region borders. Digits along each segment must sum to the same value. 
+        
+        Note that if a region sum line enters the same region twice, each of the two segments counts as separate sums. 
+        """
+        segment_vars:list[list[IntVar]] = [[grid.cell(*cell) for cell in segment] for segment in segments]
+        for vars1, vars2 in pairwise(segment_vars):
+            model.add(sum(vars1) == sum(vars2))

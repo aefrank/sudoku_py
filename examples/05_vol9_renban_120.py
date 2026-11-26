@@ -4,15 +4,12 @@ https://logic-masters.de/Raetselportal/Raetsel/zeigen.php?id=000TZ0
 """
 
 from functools import reduce
-from typing import Any, Iterable
 
-from ortools.sat.python.cp_model import CpModel, CpSolver, IntVar
+from ortools.sat.python.cp_model import CpSolver, IntVar
 
 from my_utils import MyProblemSetup, MySolutionPrinter, concatenate_constraint_lists, remove_offset
-from sudoku_py.constraint import Constraint, Given, MultiCellConstraint, Renban
-from sudoku_py.core import Coords, partition, partition_out_types
-from sudoku_py.grid import SudokuGrid
-from sudoku_py.problem import SudokuProblem
+from sudoku_py.constraint import Constraint, Given, Renban
+from sudoku_py.core import Coords, partition_out_disjoint_types
 
 
     
@@ -80,7 +77,7 @@ class _Printer(MySolutionPrinter):
     _renban_cells:set[Coords]
     def __init__(self, problem: MyProblemSetup):
         super().__init__(problem, problem.correct_solution)
-        givens, renban = (set(out) for out in partition_out_types(problem.constraints, *[Given, Renban]))
+        givens, renban = partition_out_disjoint_types(problem.constraints, *[Given, Renban])
         self._given_cells = set(g.cell for g in givens)
         self._renban_cells = set()
         for r in renban:
